@@ -1,6 +1,6 @@
 // Firebase auth + wallet layer. Loads the Firebase SDK lazily only when configured,
 // so the game still runs in guest mode before you set up Firebase.
-import { FIREBASE_CONFIG, ADMIN_EMAILS, STARTING_BALANCE, isConfigured } from "./firebase-config.js?v=9";
+import { FIREBASE_CONFIG, ADMIN_EMAILS, STARTING_BALANCE, isConfigured } from "./firebase-config.js?v=11";
 
 const SDK = "https://www.gstatic.com/firebasejs/10.12.2";
 
@@ -11,6 +11,7 @@ export const state = {
   configured: isConfigured(),
   user: null,        // firebase user
   profile: null,     // { uid, name, email, coins, isAdmin }
+  blocked: null,     // "disabled" | "deleted" — why the last sign-in was refused (shown on the login screen)
 };
 
 export function isAdminEmail(email) {
@@ -51,6 +52,9 @@ export function onUserChange(cb) {
     state.user = user;
     if (profileUnsub) { profileUnsub(); profileUnsub = null; }
     if (user) {
+      // An account the admin deleted stays out: its profile isn't recreated.
+      if ((await fns.getDoc(fns.doc(db, "banned", user.uid))).exists()) { block("deleted"); return; }
+      state.blocked = null;
       await ensureProfile(user);
       watchProfile(user.uid, () => cb(user));
     } else {
@@ -77,7 +81,10 @@ async function ensureProfile(user) {
 function watchProfile(uid, cb) {
   const ref = fns.doc(db, "users", uid);
   profileUnsub = fns.onSnapshot(ref, (snap) => {
+    // Deactivated or deleted while signed in → signed out right away.
+    if (!snap.exists()) { block("deleted"); return; }
     const d = snap.data() || {};
+    if (d.disabled) { block("disabled"); return; }
     state.profile = {
       uid,
       name: d.name || "لاعب",
@@ -87,6 +94,12 @@ function watchProfile(uid, cb) {
     };
     cb();
   });
+}
+
+function block(reason) {
+  state.blocked = reason;
+  if (profileUnsub) { profileUnsub(); profileUnsub = null; }
+  fns.signOut(auth);
 }
 
 // --- Auth actions ---
@@ -109,11 +122,49 @@ export async function listUsers() {
   return out;
 }
 
+// Live list of every account (admin only). cb(users[]) on each change; returns unsubscribe.
+export function watchUsers(cb, onError) {
+  return fns.onSnapshot(fns.collection(db, "users"), (q) => {
+    const out = [];
+    q.forEach((d) => out.push({ uid: d.id, ...d.data() }));
+    cb(out);
+  }, onError);
+}
+
+// Deleted accounts (admin only) — kept as a tombstone so the profile isn't recreated on next login.
+export function watchBanned(cb, onError) {
+  return fns.onSnapshot(fns.collection(db, "banned"), (q) => {
+    const out = [];
+    q.forEach((d) => out.push({ uid: d.id, ...d.data() }));
+    cb(out);
+  }, onError);
+}
+
+// Deactivate / reactivate: a disabled player can't sign in, play, bet or join sessions.
+export function setDisabled(uid, disabled) {
+  return fns.updateDoc(fns.doc(db, "users", uid), { disabled: !!disabled });
+}
+
+// Delete the profile + wallet and ban the account from coming back. (The sign-in record itself
+// lives in Firebase Authentication — remove it from the Console to free the email.)
+export async function deleteAccount(u) {
+  const batch = fns.writeBatch(db);
+  batch.set(fns.doc(db, "banned", u.uid), { name: u.name || "", email: u.email || "", coins: u.coins ?? 0, ts: fns.serverTimestamp() });
+  batch.delete(fns.doc(db, "users", u.uid));
+  await batch.commit();
+}
+
+// Undo a delete: the player gets a fresh profile (starting balance) on their next sign-in.
+export function restoreAccount(uid) {
+  return fns.deleteDoc(fns.doc(db, "banned", uid));
+}
+
 export async function adjustCoins(uid, delta) {
   const ref = fns.doc(db, "users", uid);
   await fns.runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
-    const cur = snap.exists() ? (snap.data().coins || 0) : 0;
+    if (!snap.exists()) throw new Error("no-user");
+    const cur = snap.data().coins || 0;
     tx.update(ref, { coins: Math.max(0, cur + delta) });
   });
 }

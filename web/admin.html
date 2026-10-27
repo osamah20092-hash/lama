@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>لوحة الإدارة — بلوت لمّة</title>
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=11" />
 </head>
 <body>
   <div class="admin-wrap">
@@ -15,6 +15,10 @@
     </div>
     <div class="auth-error" id="admin-msg"></div>
     <div id="users-list"></div>
+    <div id="banned-wrap" style="display:none">
+      <h3 class="banned-title">🗑️ حسابات محذوفة</h3>
+      <div id="banned-list"></div>
+    </div>
   </div>
   <script type="module" src="js/admin.js"></script>
 </body>

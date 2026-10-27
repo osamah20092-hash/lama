@@ -29,6 +29,10 @@ export const BET_TIERS = [0, 10, 50, 100];
 // Hard cap on how much a single wallet write may add (anti-abuse; see firestore.rules).
 export const MAX_SINGLE_WIN = 200;
 
+// EXPERIMENTAL: "📊 إحصائياتي" on the home screen — your record against each friend in private
+// sessions (see js/stats.js). Set to false to hide it.
+export const SHOW_H2H = true;
+
 export function isConfigured() {
   return FIREBASE_CONFIG.apiKey && !FIREBASE_CONFIG.apiKey.startsWith("PASTE");
 }

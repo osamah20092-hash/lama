@@ -75,14 +75,22 @@ body {
 /* ---------- Admin ---------- */
 .admin-wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
 .admin-wrap h2 { color: var(--gold); }
-.user-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 12px 14px; margin: 8px 0; }
+.user-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 12px 14px; margin: 8px 0; }
+.user-row.disabled { opacity: .7; border-color: rgba(255,120,100,.45); }
+.user-row .u-info { min-width: 0; }
 .user-row .u-name { font-weight: 700; }
-.user-row .u-email { font-size: 12px; opacity: .6; }
+.user-row .u-email { font-size: 12px; opacity: .6; overflow-wrap: anywhere; }
 .user-row .u-coins { color: var(--gold); font-weight: 800; }
-.admin-actions { display: flex; gap: 6px; }
+.user-row > .admin-actions.full { grid-column: 1 / -1; }
+.admin-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .admin-actions button { border: 0; border-radius: 8px; padding: 8px 10px; font-weight: 700; cursor: pointer; font-family: inherit; background: rgba(255,255,255,.12); color: #fff; }
+.admin-actions button:disabled { opacity: .5; cursor: wait; }
+.admin-actions .amount { width: 90px; border: 1px solid rgba(255,255,255,.25); border-radius: 8px; padding: 8px; background: rgba(0,0,0,.3); color: #fff; font-family: inherit; font-weight: 700; text-align: center; }
 .admin-actions .give { background: #1f8a4c; }
 .admin-actions .take { background: #a23b2e; }
+.admin-actions .warn { background: #9a6a12; }
+.account-actions { justify-content: flex-end; padding-top: 6px; border-top: 1px dashed rgba(255,255,255,.12); }
+.banned-title { color: #ff9a8d; margin-top: 28px; font-size: 16px; }
 
 /* ---------- Top bar ---------- */
 .topbar {
@@ -320,3 +328,12 @@ body {
 .proj-row { display: flex; align-items: center; gap: 3px; font-size: 13px; white-space: nowrap; }
 .proj-row b { color: var(--gold); margin-inline-end: 6px; }
 .proj-row img { width: 26px; height: 38px; border-radius: 3px; background: #fff; }
+
+/* EXPERIMENTAL: head-to-head stats (js/stats.js) */
+.stats-total { text-align: center; margin: 4px 0 14px; color: var(--gold); }
+.rival-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 10px 14px; margin: 8px 0; }
+.rival-row.lead { border-color: rgba(80,200,120,.6); }
+.rival-row.trail { border-color: rgba(255,120,100,.5); }
+.rival-name { font-weight: 800; }
+.rival-rec { font-size: 14px; }
+.rival-with { opacity: .65; }

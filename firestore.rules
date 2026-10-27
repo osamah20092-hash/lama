@@ -8,22 +8,34 @@ service cloud.firestore {
         && request.auth.token.email in ['osamah20092@gmail.com'];
     }
 
+    // Signed in, has a profile, and the admin hasn't deactivated it (users/{uid}.disabled).
+    function isActive() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('disabled', false) == false;
+    }
+
     match /users/{uid} {
       // Read your own profile; admin reads everyone.
       allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
 
-      // Create your own profile once, with the starting balance and non-admin.
+      // Create your own profile once, with the starting balance and non-admin —
+      // unless the admin deleted this account (banned/{uid}).
       allow create: if request.auth != null
         && request.auth.uid == uid
         && request.resource.data.coins == 1000
-        && request.resource.data.isAdmin == false;
+        && request.resource.data.isAdmin == false
+        && request.resource.data.get('disabled', false) == false
+        && !exists(/databases/$(database)/documents/banned/$(uid));
 
-      // Admin can change anything. A normal user may change ONLY their own coins
+      // Admin can change anything. A normal, active user may change ONLY their own coins
       // (for staking/winning), and never by more than 200 in a single write
-      // (anti-abuse cap = MAX_SINGLE_WIN). Name/email/isAdmin stay frozen for self-writes.
+      // (anti-abuse cap = MAX_SINGLE_WIN). Name/email/isAdmin/disabled stay frozen for self-writes.
       allow update: if isAdmin()
         || (request.auth != null
             && request.auth.uid == uid
+            && resource.data.get('disabled', false) == false
+            && request.resource.data.get('disabled', false) == false
             && request.resource.data.name == resource.data.name
             && request.resource.data.email == resource.data.email
             && request.resource.data.isAdmin == resource.data.isAdmin
@@ -46,7 +58,7 @@ service cloud.firestore {
     match /rooms/{code} {
       allow get: if request.auth != null;
       allow list: if false;
-      allow create: if request.auth != null
+      allow create: if isActive()
         && request.resource.data.hostUid == request.auth.uid
         && request.resource.data.code == code;
       allow update, delete: if request.auth != null && resource.data.hostUid == request.auth.uid;
@@ -54,7 +66,7 @@ service cloud.firestore {
       // Waiting hall. Members read/write only their own entry; a kicked member stays kicked.
       match /members/{uid} {
         allow read: if request.auth != null && (request.auth.uid == uid || isRoomHost(code));
-        allow create: if request.auth != null && request.auth.uid == uid
+        allow create: if isActive() && request.auth.uid == uid
           && request.resource.data.kicked == false;
         allow update: if isRoomHost(code)
           || (request.auth != null && request.auth.uid == uid
@@ -70,7 +82,7 @@ service cloud.firestore {
 
       // Moves sent to the host. You may only act for the seat you're sitting in.
       match /actions/{id} {
-        allow create: if request.auth != null
+        allow create: if isActive()
           && request.resource.data.uid == request.auth.uid
           && request.resource.data.seat is int
           && get(/databases/$(database)/documents/rooms/$(code)).data.seats[request.resource.data.seat].uid == request.auth.uid;
@@ -86,11 +98,19 @@ service cloud.firestore {
       }
     }
 
-    // Match history: a player may add their own records; only admin reads them.
+    // Match history: a player may add their own records and read them back (for their stats);
+    // admin reads everything.
     match /matches/{id} {
-      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
-      allow read: if isAdmin();
+      allow create: if isActive() && request.resource.data.uid == request.auth.uid;
+      allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
       allow update, delete: if false;
+    }
+
+    // Accounts the admin deleted. Stops the profile from being recreated on the next sign-in;
+    // the player may read only their own entry (to be told why).
+    match /banned/{uid} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+      allow write: if isAdmin();
     }
   }
 }

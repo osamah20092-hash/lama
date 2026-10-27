@@ -1,10 +1,11 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=9";
-import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=9";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=9";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=9";
-import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js?v=9";
-import * as rooms from "./rooms.js?v=9";
-import * as audio from "./audio.js?v=9";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=11";
+import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=11";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=11";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=11";
+import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=11";
+import * as rooms from "./rooms.js?v=11";
+import * as audio from "./audio.js?v=11";
+import * as stats from "./stats.js?v=11";
 
 const $ = (id) => document.getElementById(id);
 let ME = 0;                   // my seat; the table is drawn relative to it (me at the bottom)
@@ -63,6 +64,8 @@ $("snd-test").onclick = () => { audio.play("card"); audio.say("hokom"); };
 // ---------- Auth wiring ----------
 $("btn-logout").onclick = async () => { await logout(); };
 $("btn-admin").onclick = () => { location.href = "admin.html"; };
+$("btn-stats").onclick = openStats;
+$("btn-stats-back").onclick = () => show("screen-home");
 $("link-login").onclick = (e) => { e.preventDefault(); show("screen-auth"); };
 $("btn-auth-guest").onclick = () => { renderWallet(null); show("screen-home"); };
 
@@ -109,6 +112,7 @@ function renderWallet(profile) {
     $("btn-logout").style.display = "block";
     $("link-login").style.display = "none";
     $("btn-admin").style.display = profile.isAdmin ? "block" : "none";
+    $("btn-stats").style.display = SHOW_H2H ? "block" : "none";
     if (COINS_ON_WIN) { stakeRow.style.display = "flex"; renderStakeChips(); }
     else stakeRow.style.display = "none";
   } else {
@@ -116,6 +120,7 @@ function renderWallet(profile) {
     $("wallet-coins").textContent = "—";
     $("btn-logout").style.display = "none";
     $("btn-admin").style.display = "none";
+    $("btn-stats").style.display = "none";
     $("link-login").style.display = state.configured ? "block" : "none";
     stakeRow.style.display = "none";
     currentStake = 0;
@@ -147,6 +152,10 @@ async function boot() {
     } else {
       if (online) exitRoom();
       renderWallet(null); show("screen-auth");
+      // Signed out because the admin deactivated or deleted the account.
+      if (state.blocked) $("auth-error").textContent = state.blocked === "deleted"
+        ? "⛔ هذا الحساب محذوف. تواصل مع الإدارة."
+        : "⛔ حسابك موقوف حالياً ولا تقدر تلعب. تواصل مع الإدارة.";
     }
   });
 }
@@ -598,13 +607,42 @@ async function showMatchResult(ev) {
     }
   }
   matchStake = 0;
-  if (online) coinLine = await collectStake(weWon);
+  if (online) {
+    if (SHOW_H2H) stats.recordRoomMatch({ code: online.code, matchId: online.room?.matchId, seats: online.seats,
+      me: ME, weWon, stake: online.room?.options?.stake || 0 });
+    coinLine = await collectStake(weWon);
+  }
   $("result-title").textContent = weWon ? "فزنا! 🏆" : "خسرنا";
   $("result-body").innerHTML =
     `<span class="big">${ev.score[US()]} — ${ev.score[THEM()]}</span><br>` +
     (weWon ? "مبروك الفوز!" : "حظ أوفر المرة الجاية") + coinLine;
   $("btn-next").textContent = online ? "رجوع للجلسة" : "رجوع للرئيسية";
   panel.classList.remove("hidden");
+}
+
+// ---------- Stats (experimental, SHOW_H2H) ----------
+async function openStats() {
+  show("screen-stats");
+  const box = $("stats-body");
+  box.textContent = "جارٍ التحميل…";
+  try {
+    const { played, won, rivals } = await stats.loadHeadToHead();
+    if (!played) { box.innerHTML = `<p class="hint">ما لعبت جلسات خاصة مع ربعك للحين. العب صكة كاملة وترجع هنا تشوف مين غلبت 😉</p>`; return; }
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+    box.innerHTML =
+      `<div class="stats-total">لعبت <b>${played}</b> صكة · فزت <b>${won}</b> · خسرت <b>${played - won}</b></div>` +
+      rivals.map((r) => {
+        const vs = r.beat + r.lostTo;
+        const lead = r.beat > r.lostTo ? "lead" : r.beat < r.lostTo ? "trail" : "";
+        return `<div class="rival-row ${lead}"><div class="rival-name">${esc(r.name)}</div><div class="rival-rec">` +
+          (vs ? `فزت عليه <b>${r.beat}</b> · خسرت منه <b>${r.lostTo}</b>` : "") +
+          (r.withMe ? `<span class="rival-with">${vs ? " · " : ""}لعب معك ${r.withMe}</span>` : "") +
+          `</div></div>`;
+      }).join("");
+  } catch (e) {
+    console.error(e);
+    box.innerHTML = `<p class="hint">تعذّر تحميل الإحصائيات.</p>`;
+  }
 }
 
 // ---------- Helpers ----------
