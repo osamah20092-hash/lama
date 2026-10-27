@@ -222,6 +222,7 @@ function renderBidPanel() {
   if (!showForHuman) { panel.classList.add("hidden"); return; }
   panel.classList.remove("hidden");   // keep the hand visible so you can judge your cards
 
+  const info = SUIT_INFO[game.flip.suit];   // used for the "حكم ♥" button label
   const flip = $("flip-card");
   flip.className = "flip-card";
   flip.innerHTML = `<img class="card-face" src="${cardSrc(game.flip)}" alt="" draggable="false">`;
