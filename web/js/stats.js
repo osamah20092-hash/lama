@@ -1,8 +1,8 @@
 // EXPERIMENTAL — head-to-head record against the real players you met in private sessions
 // ("فزت على أسامة ٣ مرات"). Switched by SHOW_H2H in firebase-config.js; to remove it entirely
 // delete this file, the SHOW_H2H flag, #screen-stats/#btn-stats in index.html and their hooks in ui.js.
-import { fire, state } from "./auth.js?v=11";
-import { TEAM_OF } from "./engine.js?v=11";
+import { fire, state } from "./auth.js?v=12";
+import { TEAM_OF } from "./engine.js?v=12";
 
 // Each player's own browser records the finished match once (refresh-safe via localStorage).
 export async function recordRoomMatch({ code, matchId, seats, me, weWon, stake }) {

@@ -4,7 +4,7 @@
 // Teams: A = seats {0,2}, B = seats {1,3}.
 import {
   makeDeck, shuffle, SUITS, ORDER_SEQ, cardStrength, cardPoints,
-} from "./deck.js?v=11";
+} from "./deck.js?v=12";
 
 export const TEAM_OF = (seat) => (seat % 2 === 0 ? "A" : "B");
 const OTHER = (team) => (team === "A" ? "B" : "A");

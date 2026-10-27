@@ -1,11 +1,11 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=11";
-import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=11";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=11";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=11";
-import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=11";
-import * as rooms from "./rooms.js?v=11";
-import * as audio from "./audio.js?v=11";
-import * as stats from "./stats.js?v=11";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=12";
+import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=12";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=12";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=12";
+import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=12";
+import * as rooms from "./rooms.js?v=12";
+import * as audio from "./audio.js?v=12";
+import * as stats from "./stats.js?v=12";
 
 const $ = (id) => document.getElementById(id);
 let ME = 0;                   // my seat; the table is drawn relative to it (me at the bottom)
@@ -29,10 +29,43 @@ function show(screen) {
 $("btn-play-cpu").onclick = startGame;
 $("btn-how").onclick = () => show("screen-how");
 $("btn-how-back").onclick = () => show("screen-home");
-$("btn-home").onclick = () => {
-  if (!online) { show("screen-home"); return; }
-  if (confirm(online.isHost ? "تبي تنهي الجلسة للكل؟" : "تبي تطلع من الجلسة؟ الكمبيوتر بيكمّل مكانك.")) exitRoom();
-};
+$("btn-home").onclick = () => leaveGame();
+
+// Leaving a match that is still running counts as a forfeit: a loss is recorded for me and the
+// computer takes my seat (offline nobody's left to watch, so the match just stops).
+const matchRunning = () => !!game && game.phase !== "matchEnd" && (!online || ME >= 0);
+
+function leaveGame() {
+  if (!matchRunning()) {
+    if (!online) { show("screen-home"); return; }
+    if (confirm(online.isHost ? "تبي تنهي الجلسة للكل؟" : "تبي تطلع من الجلسة؟")) exitRoom();
+    return;
+  }
+  const msg = online?.isHost
+    ? "متأكد إنك بتنسحب؟ بتنحسب عليك خسارة، والجلسة بتنتهي للكل."
+    : "متأكد إنك بتنسحب؟ بتنحسب عليك خسارة" + (online ? " والكمبيوتر بيكمّل مكانك." : ".");
+  if (!confirm(msg)) return;
+  if (!online) {
+    logMatch(matchStake, false);
+    matchStake = 0;
+    resetDriver();
+    game = null;
+    show("screen-home");
+    return;
+  }
+  if (SHOW_H2H) stats.recordRoomMatch({ code: online.code, matchId: online.room?.matchId, seats: online.seats,
+    me: ME, weWon: false, stake: online.room?.options?.stake || 0 });
+  collectStake(false);
+  exitRoom();
+}
+
+// The phone/browser back button during a match asks the same question instead of leaving the page.
+window.addEventListener("popstate", () => {
+  if (!$("screen-game").classList.contains("active") || !matchRunning()) return;
+  history.pushState({ inGame: true }, "");
+  leaveGame();
+});
+
 $("btn-next").onclick = () => {
   $("result-panel").classList.add("hidden");
   if (online) {
@@ -191,6 +224,7 @@ function enterGameScreen() {
     } : null;
   }
   show("screen-game");
+  if (!history.state?.inGame) history.pushState({ inGame: true }, "");   // catch the back button
   audio.play("shuffle");
   render();
 }
