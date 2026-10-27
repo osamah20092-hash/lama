@@ -1,6 +1,6 @@
 // Firebase auth + wallet layer. Loads the Firebase SDK lazily only when configured,
 // so the game still runs in guest mode before you set up Firebase.
-import { FIREBASE_CONFIG, ADMIN_EMAILS, STARTING_BALANCE, isConfigured } from "./firebase-config.js";
+import { FIREBASE_CONFIG, ADMIN_EMAILS, STARTING_BALANCE, isConfigured } from "./firebase-config.js?v=6";
 
 const SDK = "https://www.gstatic.com/firebasejs/10.12.2";
 
@@ -24,9 +24,19 @@ export async function initFirebase() {
     import(`${SDK}/firebase-auth.js`),
     import(`${SDK}/firebase-firestore.js`),
   ]);
-  app = initializeApp(FIREBASE_CONFIG);
+  // Local testing against the Firebase emulators: open http://localhost:<port>/?emu once.
+  // Each tab then signs in separately (session persistence), so two tabs = two players.
+  const emu = ["localhost", "127.0.0.1"].includes(location.hostname)
+    && (new URLSearchParams(location.search).has("emu") || sessionStorage.getItem("emu"));
+  app = initializeApp(emu ? { ...FIREBASE_CONFIG, projectId: "demo-lamma" } : FIREBASE_CONFIG);
   auth = authMod.getAuth(app);
   db = fsMod.getFirestore(app);
+  if (emu) {
+    sessionStorage.setItem("emu", "1");
+    authMod.connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
+    fsMod.connectFirestoreEmulator(db, "127.0.0.1", 8080);
+    await authMod.setPersistence(auth, authMod.browserSessionPersistence);
+  }
   fns = { ...authMod, ...fsMod };
   return true;
 }

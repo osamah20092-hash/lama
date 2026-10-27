@@ -1,9 +1,9 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js";
-import { chooseBid, chooseCard } from "./ai.js";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS } from "./deck.js";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js";
-import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js";
-import * as rooms from "./rooms.js";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=6";
+import { chooseBid, chooseCard } from "./ai.js?v=6";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=6";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=6";
+import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js?v=6";
+import * as rooms from "./rooms.js?v=6";
 
 const $ = (id) => document.getElementById(id);
 let ME = 0;                   // my seat; the table is drawn relative to it (me at the bottom)
@@ -143,6 +143,7 @@ async function startGame() {
     catch (e) { alert("تعذّر حجز الرهان، حاول مرة ثانية"); return; }
   }
   ME = 0;
+  resetDriver();
   game = new BalootGame({ targetScore: 152 });
   game.on(onEvent);
   enterGameScreen();
@@ -169,9 +170,12 @@ function enterGameScreen() {
 // ---------- Event handling ----------
 function onEvent(ev) {
   switch (ev.type) {
-    case "bid": if (ev.seat !== ME && ev.action.kind !== "pass") toast(`${seatName(ev.seat)}: ${bidLabel(ev.action)}`); break;
+    case "bid": if (ev.seat !== ME && ev.action.kind !== "pass") toast(`${seatName(ev.seat)}: ${bidLabel(ev.action, ev.phase)}`); break;
     case "contract": toast(contractText(ev.mode, ev.trump) + (ev.declarer === ME ? " · أنت الشاري" : ` · الشاري ${seatName(ev.declarer)}`)); break;
     case "play-start": { const t = playStartText(ev); if (t) toast(t, 3200); break; }
+    case "declare": toast(`${ev.seat === ME ? "أعلنت" : seatName(ev.seat) + ":"} ${ev.types.map((t) => PROJECT_AR[t]).join(" + ")}`); break;
+    case "projects": { const t = projectsText(ev.projects); if (t) toast(t, 3200); break; }
+    case "qaid": toast(`⚖️ ${seatName(ev.seat)} قيّد — ${ev.correct ? "صح!" : "غلط!"}`, 3000); break;
     case "trick-won": break;
     case "round-end": showRoundResult(ev); break;
     case "match-end": showMatchResult(ev); break;
@@ -192,7 +196,29 @@ function render() {
   renderTrick();
   renderTurn();
   renderBidPanel();
+  renderActions();
 }
+
+function renderActions() {
+  const decl = $("btn-declare");
+  const canDecl = ME >= 0 && !busy && game.canDeclare(ME);
+  decl.style.display = canDecl ? "" : "none";
+  if (canDecl) decl.textContent = "📢 أعلن: " + game.projectCandidates[ME].map((p) => PROJECT_AR[p.type]).join(" + ");
+  $("btn-qaid").style.display = online && game.strict === false && game.phase === "playing" && ME >= 0 ? "" : "none";
+}
+
+$("btn-declare").onclick = () => {
+  if (busy || !game.canDeclare(ME)) return;
+  if (online && !online.isHost) { sendMove({ kind: "declare" }); return; }
+  game.declareProjects(ME);
+  render();
+};
+$("btn-qaid").onclick = () => {
+  if (game.phase !== "playing" || !confirm("تقيّد على الخصم؟ لو ما غلطوا، تنقلب الجولة عليكم.")) return;
+  if (online && !online.isHost) { sendMove({ kind: "qaid" }); return; }
+  game.claimQaid(ME);
+  render();
+};
 
 function cardSrc(card) { return `assets/cards/${card.rank}_${card.suit}.svg`; }
 
@@ -252,6 +278,7 @@ function renderTrick() {
 }
 
 function renderTurn() {
+  if (hostAway()) { $("turn-indicator").textContent = "⏳ المضيف طلع من الصفحة — اللعب يكمّل لما يرجع"; return; }
   $("turn-indicator").textContent =
     game.phase === "playing" ? (game.turn === ME ? "دورك" : "دور " + seatName(game.turn)) :
     BID_PHASES.includes(game.phase) ? (game.phase === "doubling" ? "الدبل" : "المزايدة") : "";
@@ -262,10 +289,11 @@ const SEAT_NAME = { 0: "أنت", 1: "يمين", 2: "شريكك", 3: "يسار" }
 // Online: the real player names; offline: the position relative to you.
 const seatName = (s) => (s !== ME && online ? online.seats[s]?.name || "—" : SEAT_NAME[rel(s)]);
 
-function bidLabel(a) {
+function bidLabel(a, phase = game.phase) {
+  const confirming = phase === "hokomConfirm";
   switch (a.kind) {
-    case "hokom": return "حكم " + SUIT_INFO[a.suit].symbol;
-    case "sun": return "صن";
+    case "hokom": return (confirming ? "✔ تأكيد الحكم " : "حكم ") + SUIT_INFO[a.suit].symbol;
+    case "sun": return confirming ? "تحويل صن" : "صن";
     case "ashkal": return "أشكال";
     case "pass": return "بس";
     case "double": return game.mode === "sun" ? "دبل" : a.locked ? "دبل مقفول" : "دبل مفتوح";
@@ -281,7 +309,7 @@ function bidTitle() {
     case "bidding1": return "الدور الأول — تشتري؟";
     case "bidding2": return "الدور الثاني — حكم ثاني أو صن";
     case "sunCheck": return `${seatName(game.hokomBidder)} اشترى حكم — تبي صن؟`;
-    case "hokomConfirm": return "تثبّت الحكم أو تحوّل صن؟";
+    case "hokomConfirm": return "تأكيد الحكم — تثبّته أو تحوّل صن؟";
     case "doubling": return contractText(game.mode, game.trump) + " · " +
       ({ 1: "تدبل؟", 2: "الخصم دبل — ترد ثري؟", 3: "ردّوا ثري — ترد فور؟", 4: "ردّوا فور — ترد قهوة؟" })[game.multiplier];
   }
@@ -355,17 +383,43 @@ function sendMove(move) {
 
 // ---------- Bot driver ----------
 // Only the browser that owns the game (offline, or the session host) drives the bots.
-let botTimer = null;          // one pending bot move at a time
+// Timers run in a Web Worker: browsers throttle page timers in background tabs (down to once
+// a minute), which would stall the whole table when the session host switches tabs.
+const later = (() => {
+  const cbs = new Map();
+  let n = 0, worker = null;
+  try {
+    worker = new Worker(URL.createObjectURL(new Blob(
+      ["onmessage = (e) => setTimeout(() => postMessage(e.data.id), e.data.ms);"], { type: "text/javascript" })));
+    worker.onmessage = (e) => { const fn = cbs.get(e.data); cbs.delete(e.data); if (fn) fn(); };
+  } catch (_) { worker = null; }
+  return (fn, ms) => {
+    if (!worker) { const t = setTimeout(fn, ms); return () => clearTimeout(t); }
+    const id = ++n;
+    cbs.set(id, fn);
+    worker.postMessage({ id, ms });
+    return () => cbs.delete(id);
+  };
+})();
+
+let botTimer = null;          // cancel function of the one pending bot move
 function botLater(ms, fn) {
   if (botTimer) return;
   const g = game;
   busy = true; render();
-  botTimer = setTimeout(() => {
+  botTimer = later(() => {
     botTimer = null;
-    if (game !== g) return;   // left the game meanwhile
-    fn();
+    if (game !== g) return;   // left the game meanwhile (resetDriver cleared busy)
+    try { fn(); } catch (e) { console.error("bot move failed", e); }
     busy = false; render();
   }, ms);
+}
+
+// Fresh driver state for a new or resumed game, so a stale bot timer can't lock input.
+function resetDriver() {
+  if (botTimer) botTimer();
+  botTimer = null;
+  busy = false;
 }
 
 function maybeBotTurn() {
@@ -373,7 +427,7 @@ function maybeBotTurn() {
   // Bidding bots
   if (BID_PHASES.includes(game.phase) && isBot(game.bidTurn)) {
     botLater(650, () => {
-      game.bid(game.bidTurn, chooseBid(game, game.bidTurn));
+      if (BID_PHASES.includes(game.phase) && isBot(game.bidTurn)) game.bid(game.bidTurn, chooseBid(game, game.bidTurn));
       setTimeout(maybeBotTurn);
     });
     return;
@@ -388,6 +442,8 @@ function afterPlayFlow() {
   if (!game || game.phase !== "playing") return;
   if (!isBot(game.turn)) { render(); return; }
   botLater(700, () => {
+    if (game.phase !== "playing" || !isBot(game.turn)) return;
+    game.declareProjects(game.turn);   // bots never forget their projects
     game.play(game.turn, chooseCard(game, game.turn).id);
     setTimeout(afterPlayFlow);
   });
@@ -400,10 +456,15 @@ function showRoundResult(ev) {
   const panel = $("result-panel");
   let title = RESULT_TITLE[ev.result];
   if (ev.result === "kaboot") title = ev.winner === US() ? "كبوت لنا! 🔥" : "كبوت علينا!";
+  if (ev.result === "qaid") title = ev.winner === US() ? "قيد صحيح ⚖️ الجولة لنا" : "انقيد علينا ⚖️";
+  if (ev.result === "qaidWrong") title = ev.winner === US() ? "قيدهم غلط — الجولة لنا" : "قيدنا غلط — الجولة لهم";
   $("result-title").textContent = title;
   const u = US(), t = THEM();
   const line = (label, v) => (v[u] || v[t]) ? `${label} — لنا ${v[u]} · لهم ${v[t]}<br>` : "";
+  const f = ev.qaid?.foul;
   $("result-body").innerHTML =
+    (ev.qaid ? `${seatName(ev.qaid.seat)} قيّد · ` +
+      (f ? `الغلطة: ${f.seat === ME ? "لعبت" : seatName(f.seat) + " لعب"} ${cardLabel(f.card)}` : "ما فيه غلطة") + "<br>" : "") +
     `العقد: <b>${contractText(game.mode, game.trump)}${multText(game)}</b><br>` +
     line("الأبناط", ev.raw) +
     line("المشاريع", ev.proj) +
@@ -412,6 +473,7 @@ function showRoundResult(ev) {
     `المجموع: لنا ${game.score[u]} · لهم ${game.score[t]}`;
   // Online only the host deals the next round.
   $("btn-next").textContent = online && !online.isHost ? "تمام" : "الجولة التالية";
+  if (online) online.resultShownAt = Date.now();
   panel.classList.remove("hidden");
 }
 
@@ -431,6 +493,7 @@ async function showMatchResult(ev) {
     }
   }
   matchStake = 0;
+  if (online) coinLine = await collectStake(weWon);
   $("result-title").textContent = weWon ? "فزنا! 🏆" : "خسرنا";
   $("result-body").innerHTML =
     `<span class="big">${ev.score[US()]} — ${ev.score[THEM()]}</span><br>` +
@@ -447,13 +510,14 @@ function multText(g) {
 }
 
 function playStartText(ev) {
-  const parts = [];
-  if (ev.projects.length) {
-    const who = TEAM_OF(ev.projects[0].seat) === US() ? "لنا" : "لهم";
-    parts.push(`مشاريع ${who}: ` + ev.projects.map((p) => `${PROJECT_AR[p.type]} (${seatName(p.seat)})`).join("، "));
-  }
-  if (ev.balootSeat !== null) parts.push(`بلوت مع ${seatName(ev.balootSeat)}`);
-  return parts.join(" · ");
+  return ev.balootSeat !== null && ev.balootSeat !== undefined ? `بلوت مع ${seatName(ev.balootSeat)}` : "";
+}
+
+// After the first trick: which declared projects count.
+function projectsText(projects) {
+  if (!projects.length) return "";
+  const who = TEAM_OF(projects[0].seat) === US() ? "لنا" : "لهم";
+  return `مشاريع ${who}: ` + projects.map((p) => `${PROJECT_AR[p.type]} (${seatName(p.seat)})`).join("، ");
 }
 
 function contractText(mode, trump) {
@@ -473,7 +537,7 @@ function toast(msg, ms = 1900) {
 // (optional PIN, lock, kick, pick seats/teams) → empty seats become bots → play. No coins.
 // The host's browser runs the real game; see rooms.js for the data flow.
 // =====================================================================
-const PUB_EVENTS = new Set(["bid", "contract", "play-start", "round-end", "match-end", "redeal"]);
+const PUB_EVENTS = new Set(["bid", "contract", "play-start", "declare", "projects", "qaid", "round-end", "match-end", "redeal"]);
 
 $("btn-private").onclick = () => {
   if (!state.user) {
@@ -485,11 +549,26 @@ $("btn-private").onclick = () => {
 };
 $("btn-room-back").onclick = () => show("screen-home");
 $("join-code").oninput = (e) => { e.target.value = rooms.normalizeCode(e.target.value); };
+let roomStake = 0;
+function renderRoomStakeChips() {
+  const box = $("room-stake-chips");
+  box.innerHTML = "";
+  for (const tier of BET_TIERS) {
+    const b = document.createElement("button");
+    b.className = "stake-chip" + (tier === roomStake ? " active" : "");
+    b.textContent = tier === 0 ? "ودّية" : `${tier} 🪙`;
+    b.onclick = () => { roomStake = tier; renderRoomStakeChips(); };
+    box.appendChild(b);
+  }
+}
+$("opt-strict").onchange = (e) => { $("opt-strict-hint").style.display = e.target.checked ? "none" : "block"; };
+
 $("btn-create-room").onclick = async () => {
   const pin = $("create-pin").value.trim();
   if (pin && !/^\d{4}$/.test(pin)) { roomError("الرمز السري ٤ أرقام"); return; }
+  if (roomStake > (state.profile?.coins || 0)) { roomError("رصيدك ما يكفي لهذا الرهان"); return; }
   roomError("");
-  try { await enterRoom(await rooms.createRoom({ pin }), true); }
+  try { await enterRoom(await rooms.createRoom({ pin, strict: $("opt-strict").checked, stake: roomStake }), true); }
   catch (e) { console.error(e); roomError("تعذّر إنشاء الجلسة، حاول مرة ثانية"); }
 };
 $("btn-join-room").onclick = () => joinByCode($("join-code").value, $("join-pin").value.trim());
@@ -515,6 +594,7 @@ function toastLobby(msg) { $("lobby-status").textContent = msg; setTimeout(rende
 
 function openRoomMenu(code) {
   roomError("");
+  renderRoomStakeChips();
   $("join-code").value = code;
   $("join-pin").value = "";
   $("join-pin").style.display = "none";
@@ -537,6 +617,8 @@ async function joinByCode(raw, pin) {
     if (room.hostUid === state.user.uid) { await enterRoom(code, true); return; }
     const seated = room.seats.some((s) => s && s.uid === state.user.uid);
     if (!seated && room.locked) { roomError("الجلسة مقفلة 🔒"); return; }
+    const stake = room.options?.stake || 0;
+    if (!seated && stake > (state.profile?.coins || 0)) { roomError(`الجلسة برهان ${stake} 🪙 ورصيدك ما يكفي`); return; }
     if (!seated && room.hasPin && !pin) {
       $("join-pin").style.display = "block";
       $("join-pin").focus();
@@ -569,6 +651,7 @@ async function enterRoom(code, isHost) {
     if (room.status === "playing" && cfg.engine) hostResume(room, cfg.engine);   // host refreshed mid-game
     online.unsubs.push(rooms.watchMembers(code, hostSyncMembers));
     online.unsubs.push(rooms.watchActions(code, hostOnAction));
+    startHostPing();
   } else {
     online.unsubs.push(rooms.watchMyMember(code, onMyMember));
     online.unsubs.push(rooms.watchMyHand(code, (hand) => {
@@ -587,10 +670,11 @@ function exitRoom(msg) {
   if (!online) return;
   const { code, isHost, unsubs } = online;
   unsubs.forEach((u) => u());
+  stopHostPing();
   if (isHost) rooms.updateRoom(code, { status: "closed" }).catch(() => {});
   else rooms.leaveRoom(code);
-  online = null; game = null; ME = 0; busy = false;
-  clearTimeout(botTimer); botTimer = null;
+  online = null; game = null; ME = 0;
+  resetDriver();
   $("result-panel").classList.add("hidden");
   history.replaceState(null, "", location.pathname);
   show("screen-home");
@@ -614,6 +698,7 @@ function onMyMember(m) {
 
 function onRoom(room) {
   if (!online) return;
+  online.lastRoomAt = Date.now();   // any snapshot (moves or the host's ping) means the host is alive
   if (!room || room.status === "closed") { if (!online.isHost) exitRoom("المضيف أنهى الجلسة"); return; }
   const prevMe = ME;
   online.room = room;
@@ -632,11 +717,16 @@ function onRoom(room) {
   if (ME < 0 || !room.state) { show("screen-lobby"); renderLobby(); return; }
   const pub = JSON.parse(room.state);
   const first = online.lastSeq === null || prevMe !== ME;
-  if (online.pub && pub.round !== online.pub.round) $("result-panel").classList.add("hidden");
+  if (online.pub && pub.round !== online.pub.round) {
+    // The host dealt again: close the round result, but give it at least 4s on screen.
+    const left = 4000 - (Date.now() - (online.resultShownAt || 0));
+    later(() => { if (game?.phase !== "roundEnd") $("result-panel").classList.add("hidden"); }, Math.max(0, left));
+  }
   online.pub = pub;
   busy = false;
   game = rooms.viewGame(pub, ME, myCards());
   if (!$("screen-game").classList.contains("active")) enterGameScreen();
+  payStakeOnce();
   // Replay the host's events we haven't seen (toasts, round results). Skip history on first sight.
   for (const e of pub.events || []) if (!first && e.seq > online.lastSeq) onEvent(e.ev);
   online.lastSeq = Math.max(online.lastSeq ?? 0, ...(pub.events || []).map((e) => e.seq));
@@ -684,6 +774,10 @@ function renderLobby() {
   else status = isHost ? "أرسل الرمز لربعك، واضغط ابدأ لما تجهزون" : "بانتظار المضيف يبدأ…";
   if (isHost && waiting.length) status += ` · بالانتظار: ${waiting.map((m) => m.name).join("، ")}`;
   if (room.hasPin) status += " · 🔑 محمية برمز";
+  const opts = room.options || {};
+  status += opts.stake ? ` · رهان ${opts.stake} 🪙` : " · ودّية";
+  if (opts.strict === false) status += " · لعب حر + قيد";
+  if (hostAway()) status = "⏳ المضيف طلع من الصفحة — انتظره يرجع";
   $("lobby-status").textContent = status;
 }
 
@@ -764,26 +858,87 @@ function attachHostGame() {
 let publishTimer = null;
 function schedulePublish() {
   if (publishTimer || !online?.isHost) return;
-  publishTimer = setTimeout(() => {
+  publishTimer = true;
+  queueMicrotask(() => {      // once per burst of engine events; never throttled in background
     publishTimer = null;
     if (!online || !game) return;
     rooms.publish(online.code, game, online.seats, online.events).catch((e) => console.error("publish", e));
   });
 }
 
+// ---------- Host presence ----------
+// The host's browser runs the game, so if it's frozen (phone app switched, screen locked) the
+// table waits. The host pings every 20s; players show a notice after 45s of silence, and the
+// host picks up immediately when it comes back to the page.
+const HOST_PING_MS = 20000, HOST_AWAY_MS = 45000;
+let hostPingTimer = null;
+function startHostPing() {
+  stopHostPing();
+  const ping = () => {
+    if (!online?.isHost) return;
+    rooms.updateRoom(online.code, { hostSeen: Date.now() }).catch(() => {});
+    hostPingTimer = later(ping, HOST_PING_MS);
+  };
+  ping();
+}
+function stopHostPing() { if (hostPingTimer) hostPingTimer(); hostPingTimer = null; }
+
+const hostAway = () => online && !online.isHost && Date.now() - (online.lastRoomAt || Date.now()) > HOST_AWAY_MS;
+setInterval(() => {
+  if (!online || online.isHost) return;
+  const away = hostAway();
+  if (away !== online.shownAway) { online.shownAway = away; if (game) render(); renderLobby(); }
+}, 5000);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || !online?.isHost) return;
+  startHostPing();
+  if (game && online.room?.status === "playing") { resetDriver(); schedulePublish(); maybeBotTurn(); render(); }
+});
+
 async function hostStartGame() {
   let b = 0;
   const seats = online.seats.map((s) => s || { bot: true, name: rooms.BOT_NAMES[b++] });
-  await rooms.updateRoom(online.code, { seats, status: "playing" });
+  const matchId = Date.now();
+  await rooms.updateRoom(online.code, { seats, status: "playing", matchId });
   online.seats = seats;
-  online.room = { ...online.room, seats, status: "playing" };
+  online.room = { ...online.room, seats, status: "playing", matchId };
   ME = seats.findIndex((s) => s && s.uid === state.user.uid);
-  game = new BalootGame({ targetScore: 152 });
+  resetDriver();
+  game = new BalootGame({ targetScore: 152, strict: online.room.options?.strict !== false });
   attachHostGame();
   schedulePublish();
   enterGameScreen();
+  payStakeOnce();
   maybeBotTurn();
 }
+
+// ---------- Stakes ----------
+// Same trust level as betting vs the computer: each player's own browser pays their stake when
+// a match starts and collects 2× when their team wins. localStorage makes both happen once per
+// match, even across refreshes.
+const stakeKey = () => `stake:${state.user?.uid}:${online.code}:${online.room?.matchId}`;
+
+async function payStakeOnce() {
+  const stake = online?.room?.options?.stake || 0;
+  if (!stake || !online.room.matchId || ME < 0 || readLS(stakeKey())) return;
+  writeLS(stakeKey(), "paid");
+  try { await placeStake(stake); }
+  catch (_) { writeLS(stakeKey(), "unpaid"); toast("رصيدك ما يكفي للرهان — تلعب بدون رهان"); }
+}
+
+async function collectStake(weWon) {
+  const stake = online?.room?.options?.stake || 0;
+  if (!stake || readLS(stakeKey()) !== "paid") return "";
+  writeLS(stakeKey(), "done");
+  logMatch(stake, weWon);
+  if (!weWon) return `<br>🪙 خسرت رهانك (${stake})`;
+  try { await awardWin(stake * 2); } catch (_) {}
+  return `<br><span class="big">🪙 +${stake * 2}</span>`;
+}
+
+function readLS(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+function writeLS(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* private mode */ } }
 
 function hostResume(room, engineJson) {
   online.seats = room.seats;
@@ -793,11 +948,13 @@ function hostResume(room, engineJson) {
     online.events = pub?.events || [];
     online.seq = Math.max(0, ...online.events.map((e) => e.seq));
   } catch (_) { /* fresh event log */ }
+  resetDriver();
   game = rooms.engineFromJSON(engineJson);
   attachHostGame();
   enterGameScreen();
   if (game.phase === "roundEnd" && game.lastRoundResult) showRoundResult(game.lastRoundResult);
   if (game.phase === "matchEnd") showMatchResult({ winner: game.score.A > game.score.B ? "A" : "B", score: { ...game.score } });
+  payStakeOnce();
   maybeBotTurn();
 }
 
@@ -817,7 +974,9 @@ function hostOnAction(a) {
   const s = online.seats[a.seat];
   if (!s || s.bot || s.uid !== a.uid) return;
   const ok = a.kind === "bid" ? game.bid(a.seat, a.action)
-           : a.kind === "play" ? game.play(a.seat, a.cardId) : false;
+           : a.kind === "play" ? game.play(a.seat, a.cardId)
+           : a.kind === "declare" ? game.declareProjects(a.seat)
+           : a.kind === "qaid" ? game.claimQaid(a.seat) : false;
   if (!ok) { schedulePublish(); return; }      // resend state so the sender is unblocked
   render();
   maybeBotTurn();

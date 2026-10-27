@@ -273,3 +273,34 @@ body {
 .lobby-seat .kick { position: absolute; inset-inline-start: 4px; top: 50%; transform: translateY(-50%); border: 0; background: rgba(192,57,43,.85); color: #fff; width: 22px; height: 22px; border-radius: 50%; font-size: 12px; cursor: pointer; line-height: 22px; padding: 0; }
 .lobby-status { font-size: 13px; opacity: .85; margin: 12px 0 4px; min-height: 18px; }
 .lock-row { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; margin: 6px 0; cursor: pointer; }
+
+/* ---------- Phone-friendly table ----------
+   Card size follows the screen width; the 8-card hand overlaps instead of overflowing. */
+#screen-game { --cw: min(64px, 15vw); }
+.myhand-wrap { height: auto; min-height: calc(var(--cw) * 1.47 + 30px); padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+.myhand { padding: 0 8px; gap: 0; }
+.seat { z-index: 3; }
+.myhand .card { width: var(--cw); height: calc(var(--cw) * 1.47); }
+.myhand .card + .card { margin-inline-start: min(0px, calc((100vw - 16px - 8 * var(--cw)) / 7)); }
+.myhand .card.playable:hover, .myhand .card.playable:active { z-index: 2; }
+.table { bottom: calc(var(--cw) * 1.47 + 34px); }
+.trick-area { width: calc(var(--cw) * 2.6 + 8px); height: calc(var(--cw) * 2.6 + 8px); }
+.trick-card { width: calc(var(--cw) * 0.9); height: calc(var(--cw) * 1.32); }
+#bid-panel { bottom: calc(var(--cw) * 1.47 + 40px); max-height: 55dvh; overflow-y: auto; }
+.action-bar { position: absolute; z-index: 6; inset-inline: 0; bottom: calc(var(--cw) * 1.47 + 30px); display: flex; justify-content: center; gap: 8px; pointer-events: none; }
+.action-bar .btn { width: auto; margin: 0; padding: 8px 16px; font-size: 14px; pointer-events: auto; }
+@media (max-width: 480px) {
+  .seat .avatar { width: 38px; height: 38px; font-size: 19px; }
+  .seat .name { font-size: 11px; max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seat-left { left: 4px; } .seat-right { right: 4px; }
+  .table-mat { width: calc(100vw - 150px); height: min(52vw, 210px); border-width: 9px; }
+  .mini-card { width: 9px; height: 14px; }
+  .scorebox { font-size: 13px; padding: 6px 10px; }
+  .contract { font-size: 12px; padding: 5px 8px; }
+  .panel { padding: 14px; }
+  .bid-buttons .btn { padding: 10px 8px; font-size: 14px; }
+}
+@media (max-height: 560px) { /* phone in landscape */
+  #screen-game { --cw: min(52px, 10vh + 8px); }
+  .seat .avatar { width: 32px; height: 32px; font-size: 16px; }
+}

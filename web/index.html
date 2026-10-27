@@ -57,8 +57,14 @@
   <section id="screen-room-menu" class="screen">
     <div class="home-card">
       <h2 class="section-title">جلسة خاصة</h2>
-      <p class="hint">جلسة ودّية بينك وبين ربعك: ما فيها رهان ولا كوينز. تنشئ الجلسة وترسل الرمز أو الرابط، وأي مقعد يبقى فاضي يكمّله الكمبيوتر.</p>
+      <p class="hint">تنشئ الجلسة وترسل الرمز أو الرابط لربعك، وأي مقعد يبقى فاضي يكمّله الكمبيوتر.</p>
       <input class="field code-field" id="create-pin" type="text" inputmode="numeric" maxlength="4" placeholder="رمز سري (اختياري، ٤ أرقام)" />
+      <div class="stake-row">
+        <div class="stake-label">الجلسة:</div>
+        <div class="stake-chips" id="room-stake-chips"></div>
+      </div>
+      <label class="lock-row"><input type="checkbox" id="opt-strict" checked /> إلزام اتباع النوع والقطع</label>
+      <p class="hint" id="opt-strict-hint" style="display:none">اللعب حر: تقدر تنزل أي ورقة، واللي يغلط يكشفه الخصم بـ «قيد ⚖️» وياخذ الجولة. القيد الغلط تنقلب على صاحبه.</p>
       <button class="btn btn-primary" id="btn-create-room">➕ أنشئ جلسة</button>
       <div class="join-row">
         <input class="field code-field" id="join-code" type="text" maxlength="6" placeholder="رمز الجلسة" autocomplete="off" />
@@ -116,6 +122,12 @@
       <div class="myhand" id="hand-0"></div>
     </div>
 
+    <!-- Declare projects (first trick) / call قيد (free-play sessions) -->
+    <div class="action-bar" id="action-bar">
+      <button class="btn btn-primary" id="btn-declare" style="display:none"></button>
+      <button class="btn btn-ghost" id="btn-qaid" style="display:none">⚖️ قيد</button>
+    </div>
+
     <!-- Bidding panel -->
     <div class="panel hidden" id="bid-panel">
       <div class="panel-title" id="bid-title">المزايدة</div>
@@ -142,14 +154,15 @@
         <li><b>الدور الثاني:</b> لو الكل قال بس، تقدر تشتري <b>حكم ثاني</b> بنوع غير الكرت المكشوف، أو <b>صن</b>. لو الكل باس، يعاد التوزيع.</li>
         <li><b>الدبل:</b> في الحكم الخصم يقدر يدبل (×٢)، والشاري يرد ثري (×٣)، ثم فور (×٤)، ثم <b>قهوة</b> (اللي يكسب الجولة يكسب الصكة). <b>المقفول:</b> ما تبدأ بالحكم إلا لو ما عندك غيره. الصن يُدبل بس لو الشاري فوق ١٠٠ والخصم تحت ١٠٠.</li>
         <li><b>اللعب:</b> ٨ كروت لكل لاعب. لازم تتبع النوع. في الحكم إذا ما عندك النوع والخصم ماسك الأكلة لازم تقطع (وتعلّي على حكمه إن أمكن). لو شريكك ماسك الأكلة أنت حر.</li>
-        <li><b>المشاريع:</b> سرا (٣ متتالية) ٢/٤، خمسين (٤) ٥/١٠، مية (٥ متتالية أو ٤ من K/Q/J/10) ١٠/٢٠، أربعمية (٤ إكك في الصن) ٤٠. الأرقام حكم/صن، وبس الفريق صاحب أكبر مشروع ينحسب له. <b>البلوت</b> (الشايب+البنت من الحكم) = ٢ دايماً.</li>
+        <li><b>المشاريع:</b> تعلن مشروعك بزر <b>«📢 أعلن»</b> في أول أكلة قبل ما تنزل ورقتك. لو نسيت، ما ينحسب لك. سرا (٣ متتالية) ٢/٤، خمسين (٤) ٥/١٠، مية (٥ متتالية أو ٤ من K/Q/J/10) ١٠/٢٠، أربعمية (٤ إكك في الصن) ٤٠. الأرقام حكم/صن، وبس الفريق صاحب أكبر مشروع ينحسب له. <b>البلوت</b> (الشايب+البنت من الحكم) = ٢ دايماً.</li>
         <li><b>النقاط:</b> الأبناط ١٦٢ في الحكم (= ١٦ نقطة) و١٣٠ في الصن (= ٢٦). آخر أكلة +١٠. <b>كبوت</b> (كل الأكلات) = ٢٥ حكم / ٤٤ صن.</li>
+        <li><b>القيد (الجلسات الخاصة باللعب الحر):</b> لو المضيف طفّى «إلزام اتباع النوع والقطع»، تقدر تنزل أي ورقة. لو الخصم ما تبع النوع أو ما قطع، اضغط <b>«⚖️ قيد»</b> وتاخذ الجولة كاملة. ولو قيّدت وهم ما غلطوا، تنقلب الجولة عليكم.</li>
         <li><b>الفوز:</b> أول فريق يوصل <b id="how-target">١٥٢</b> يكسب. لو الشاري ما تفوّق، تنقلب عليه والخصم ياخذ كل النقاط (قهر).</li>
       </ul>
       <button class="btn btn-primary" id="btn-how-back">رجوع</button>
     </div>
   </section>
 
-  <script type="module" src="js/ui.js?v=5"></script>
+  <script type="module" src="js/ui.js?v=6"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@
 // Teams: A = seats {0,2}, B = seats {1,3}.
 import {
   makeDeck, shuffle, SUITS, ORDER_SEQ, cardStrength, cardPoints,
-} from "./deck.js";
+} from "./deck.js?v=6";
 
 export const TEAM_OF = (seat) => (seat % 2 === 0 ? "A" : "B");
 const OTHER = (team) => (team === "A" ? "B" : "A");
@@ -24,9 +24,12 @@ export const PROJECT_AR = { sira: "سرا", "50": "خمسين", "100": "مية",
 const bidKey = (a) => `${a.kind}|${a.suit || ""}|${a.locked ? "L" : ""}`;
 
 export class BalootGame {
-  constructor({ targetScore = 152, rng = Math.random } = {}) {
+  // strict: the game forces following suit / trumping. When false any card may be played and
+  // the other team must catch a revoke by calling قيد (claimQaid).
+  constructor({ targetScore = 152, rng = Math.random, strict = true } = {}) {
     this.targetScore = targetScore;
     this.rng = rng;
+    this.strict = strict;
     this.score = { A: 0, B: 0 };
     this.dealer = 3;              // dealer rotates; seat 0 leads first deal
     this.round = 0;
@@ -35,7 +38,12 @@ export class BalootGame {
   }
 
   on(fn) { this.listeners.push(fn); }
-  emit(ev) { for (const fn of this.listeners) fn(ev); }
+  // A failing listener (UI bug) must never interrupt a state transition halfway.
+  emit(ev) {
+    for (const fn of this.listeners) {
+      try { fn(ev); } catch (e) { console.error("listener failed on", ev.type, e); }
+    }
+  }
 
   // ---------- Round lifecycle ----------
   startRound() {
@@ -50,8 +58,10 @@ export class BalootGame {
     this.gahwa = false;           // قهوة: round winner takes the match
     this.locked = false;          // مقفول: no trump leads unless holding only trumps
     this.doubler = null;
-    this.projects = [];           // [{seat, type, set, top, suit, cards}]
+    this.projects = [];           // declared projects [{seat, type, set, top, suit, cards}]
+    this.projectCandidates = [[], [], [], []]; // what each hand could declare (must be declared to count)
     this.projectTeam = null;      // only the team with the best project scores its projects
+    this.fouls = [];              // revokes made while strict is off: [{seat, card, trick}]
     this.balootSeat = null;       // holder of trump K+Q (بلوت)
     this.tricks = [];             // completed tricks
     this.currentTrick = [];       // {seat, card}
@@ -231,20 +241,18 @@ export class BalootGame {
     this.emit({
       type: "play-start",
       multiplier: this.multiplier, gahwa: this.gahwa, locked: this.locked,
-      projects: this.countedProjects(), balootSeat: this.balootSeat,
+      balootSeat: this.balootSeat,
     });
     this.emit({ type: "state" });
   }
 
   // ---------- Projects (مشاريع) ----------
+  // Projects only count when declared during the first trick, before playing your first card.
   findProjects() {
     this.projects = [];
-    for (let s = 0; s < 4; s++) {
-      for (const p of detectProjects(this.hands[s], this.mode)) this.projects.push({ ...p, seat: s });
-    }
-    let best = null;
-    for (const p of this.projects) if (!best || this.compareProjects(p, best) > 0) best = p;
-    this.projectTeam = best ? TEAM_OF(best.seat) : null;
+    this.projectTeam = null;
+    this.projectCandidates = [0, 1, 2, 3].map((s) =>
+      detectProjects(this.hands[s], this.mode).map((p) => ({ ...p, seat: s })));
 
     // Baloot: K+Q of trumps in one hand. Not scored separately when inside a trump مية or a four-K/Q مية.
     this.balootSeat = null;
@@ -253,7 +261,7 @@ export class BalootGame {
         const h = this.hands[s];
         const has = (r) => h.some((c) => c.suit === this.trump && c.rank === r);
         if (!has("K") || !has("Q")) continue;
-        const blocked = this.projects.some((p) => p.seat === s && p.type === "100" && (
+        const blocked = this.projectCandidates[s].some((p) => p.type === "100" && (
           (p.set && (p.top === "K" || p.top === "Q")) ||
           (!p.set && p.suit === this.trump && p.cards.some((c) => c.rank === "K") && p.cards.some((c) => c.rank === "Q"))
         ));
@@ -272,10 +280,38 @@ export class BalootGame {
     return order.indexOf(b.seat) - order.indexOf(a.seat);
   }
 
+  canDeclare(seat) {
+    return this.phase === "playing" && this.tricks.length === 0
+      && this.projectCandidates[seat].length > 0
+      && !this.projects.some((p) => p.seat === seat)
+      && !this.currentTrick.some((p) => p.seat === seat);
+  }
+
+  declareProjects(seat) {
+    if (!this.canDeclare(seat)) return false;
+    this.projects.push(...this.projectCandidates[seat]);
+    this.emit({ type: "declare", seat, types: this.projectCandidates[seat].map((p) => p.type) });
+    this.emit({ type: "state" });
+    return true;
+  }
+
+  // After the first trick: only the team with the best declared project keeps its projects.
+  settleProjects() {
+    let best = null;
+    for (const p of this.projects) if (!best || this.compareProjects(p, best) > 0) best = p;
+    this.projectTeam = best ? TEAM_OF(best.seat) : null;
+  }
+
   countedProjects() { return this.projects.filter((p) => TEAM_OF(p.seat) === this.projectTeam); }
 
   // ---------- Playing ----------
   legalMoves(seat) {
+    if (this.strict) return this.strictMoves(seat);
+    return this.phase === "playing" && seat === this.turn ? this.hands[seat].slice() : [];
+  }
+
+  // The cards the rules allow (following suit, trumping, مقفول).
+  strictMoves(seat) {
     if (this.phase !== "playing" || seat !== this.turn) return [];
     const hand = this.hands[seat];
     const trumps = this.mode === "hokom" ? hand.filter((c) => c.suit === this.trump) : [];
@@ -328,6 +364,9 @@ export class BalootGame {
     const legal = this.legalMoves(seat);
     const card = legal.find((c) => c.id === cardId);
     if (!card) return false;
+    if (!this.strict && !this.strictMoves(seat).some((c) => c.id === cardId)) {
+      this.fouls.push({ seat, card, trick: this.tricks.length });
+    }
 
     this.hands[seat] = this.hands[seat].filter((c) => c.id !== cardId);
     this.currentTrick.push({ seat, card });
@@ -351,6 +390,10 @@ export class BalootGame {
     this.emit({ type: "trick-won", seat: w.seat, team });
     this.currentTrick = [];
     this.turn = w.seat;
+    if (this.tricks.length === 1) {
+      this.settleProjects();
+      if (this.projects.length) this.emit({ type: "projects", projects: this.countedProjects() });
+    }
 
     if (this.hands.every((h) => h.length === 0)) this.scoreRound();
     else this.emit({ type: "state" });
@@ -406,14 +449,46 @@ export class BalootGame {
         gp[winner] = total * m + (proj.A + proj.B) * projMult;
       }
     }
+    this.finishRound({ raw, cards, proj, bal, gp, result, winner, kabootTeam });
+  }
+
+  // ---------- قيد (only when strict is off) ----------
+  // Any player may call قيد during play. If the other team revoked this round, the caller's team
+  // takes the whole round as if the buyers failed; a wrong call hands the round to the other team.
+  claimQaid(seat) {
+    if (this.strict || this.phase !== "playing") return false;
+    if (this.tricks.length === 0) this.settleProjects();
+    const team = TEAM_OF(seat);
+    const foul = this.fouls.find((f) => TEAM_OF(f.seat) !== team) || null;
+    const winner = foul ? team : OTHER(team);
+    const mode = this.mode, m = this.multiplier;
+
+    const raw = { A: 0, B: 0 };
+    for (const t of ["A", "B"]) for (const c of this.wonCards[t]) raw[t] += cardPoints(c, mode, this.trump);
+    const proj = { A: 0, B: 0 };
+    for (const p of this.countedProjects()) proj[this.projectTeam] += PROJECT_VALUE[mode][p.type];
+    const bal = { A: 0, B: 0 };
+    if (this.balootSeat !== null) bal[TEAM_OF(this.balootSeat)] = 2;
+    const gp = { A: 0, B: 0 };
+    gp[winner] = (mode === "sun" ? 26 : 16) * m + (proj.A + proj.B) * (m > 1 ? 2 : 1);
+
+    this.emit({ type: "qaid", seat, correct: !!foul, foul });
+    this.finishRound({
+      raw, cards: null, proj, bal, gp, result: foul ? "qaid" : "qaidWrong", winner, kabootTeam: null,
+      qaid: { seat, foul },
+    });
+    return true;
+  }
+
+  finishRound({ gp, bal, winner, ...rest }) {
     gp.A += bal.A;
     gp.B += bal.B;
 
     this.score.A += gp.A;
     this.score.B += gp.B;
     const ev = {
-      type: "round-end", raw, cards, proj, bal, gp, result, winner, decTeam: dec,
-      multiplier: m, gahwa: this.gahwa, kabootTeam,
+      type: "round-end", ...rest, gp, bal, winner, decTeam: TEAM_OF(this.declarer),
+      multiplier: this.multiplier, gahwa: this.gahwa,
     };
     this.lastRoundResult = ev;
     this.phase = "roundEnd";

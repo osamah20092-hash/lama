@@ -1,4 +1,4 @@
-// Private sessions (جلسات خاصة): friendly online tables between friends, no coins.
+// Private sessions (جلسات خاصة): online tables between friends, friendly or with a coin stake.
 // Modeled on how Baloot apps run them: the host creates a table with a short code, shares a
 // link, joiners land in a waiting hall and the host seats them; an optional PIN locks the table;
 // empty seats are filled by the computer when the game starts.
@@ -12,8 +12,8 @@
 //
 // The host's browser runs the authoritative BalootGame (including the bots) and publishes a
 // public snapshot; every other player renders that snapshot and sends moves as actions.
-import { fire, state as authState } from "./auth.js";
-import { BalootGame } from "./engine.js";
+import { fire, state as authState } from "./auth.js?v=6";
+import { BalootGame, detectProjects } from "./engine.js?v=6";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid typos
 export const BOT_NAMES = ["كمبيوتر ١", "كمبيوتر ٢", "كمبيوتر ٣"];
@@ -35,7 +35,8 @@ export function inviteLink(code) {
 }
 
 // ---------- Lobby ----------
-export async function createRoom({ pin = "" } = {}) {
+// options: { strict: force following suit/trumping, stake: coins each player puts in (0 = friendly) }
+export async function createRoom({ pin = "", strict = true, stake = 0 } = {}) {
   const { db, fns } = fire();
   const me = authState.profile;
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -45,6 +46,7 @@ export async function createRoom({ pin = "" } = {}) {
     batch.set(roomRef(code), {
       code, hostUid: me.uid, hostName: me.name, status: "lobby", locked: false, hasPin: !!pin,
       seats: [{ uid: me.uid, name: me.name }, null, null, null],
+      options: { strict, stake }, matchId: null,
       state: null, createdAt: fns.serverTimestamp(),
     });
     batch.set(sub(code, "private", "config"), { pin, engine: null });
@@ -186,11 +188,14 @@ export function engineFromJSON(json) {
 // Everything a player may see: no hands, deck or undeclared projects.
 export function publicState(g) {
   const pub = {};
-  for (const k of ["targetScore", "score", "dealer", "round", "phase", "mode", "trump", "declarer",
+  for (const k of ["targetScore", "strict", "score", "dealer", "round", "phase", "mode", "trump", "declarer",
     "hokomBidder", "pendingTrump", "hokomRound", "multiplier", "gahwa", "locked", "doubler",
     "bidQueue", "bidTurn", "turn", "currentTrick", "flip", "lastRoundResult"]) pub[k] = g[k] ?? null;
   pub.handCounts = g.hands.map((h) => h.length);
   pub.balootSeat = ["playing", "roundEnd", "matchEnd"].includes(g.phase) ? g.balootSeat : null;
+  pub.trickNo = g.tricks.length;
+  // Declared projects are announced by type only; the cards stay hidden.
+  pub.declared = g.projects.map((p) => ({ seat: p.seat, type: p.type }));
   return pub;
 }
 
@@ -200,5 +205,10 @@ export function viewGame(pub, mySeat, myCards) {
   const g = Object.assign(Object.create(BalootGame.prototype), pub);
   g.listeners = [];
   g.hands = pub.handCounts.map((n, s) => (s === mySeat ? myCards.slice() : new Array(n).fill(null)));
+  // Enough for canDeclare(mySeat): my candidates come from my own 8-card hand.
+  g.tricks = new Array(pub.trickNo || 0).fill(null);
+  g.projects = pub.declared || [];
+  g.projectCandidates = [0, 1, 2, 3].map((s) =>
+    s === mySeat && pub.mode && myCards.length === 8 ? detectProjects(myCards, pub.mode) : []);
   return g;
 }

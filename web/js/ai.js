@@ -1,7 +1,7 @@
 // Simple heuristic computer player for Baloot. Not world-class, but plays sensibly:
 // bids on strong hands, follows the rules, wins tricks it can cheaply, and dumps low otherwise.
-import { cardStrength, cardPoints } from "./deck.js";
-import { TEAM_OF } from "./engine.js";
+import { cardStrength, cardPoints } from "./deck.js?v=6";
+import { TEAM_OF } from "./engine.js?v=6";
 
 // --- Bidding ---
 export function chooseBid(game, seat) {
@@ -62,7 +62,7 @@ function sunStrength(hand) {
 
 // --- Card play ---
 export function chooseCard(game, seat) {
-  const legal = game.legalMoves(seat);
+  const legal = game.strictMoves(seat); // bots always play by the rules, even when strict is off
   if (legal.length === 1) return legal[0];
 
   const trick = game.currentTrick;
