@@ -46,6 +46,7 @@
       <button class="btn btn-primary" id="btn-play-cpu">🎮 العب ضد الكمبيوتر</button>
       <button class="btn btn-primary" id="btn-private">👥 جلسة خاصة مع ربعك</button>
       <button class="btn btn-ghost" id="btn-how">❔ كيف ألعب</button>
+      <button class="btn btn-ghost" id="btn-sound-home">🔊 الأصوات والمعلّق</button>
       <button class="btn btn-ghost" id="btn-admin" style="display:none">🛠️ لوحة الإدارة</button>
       <button class="btn btn-ghost" id="btn-logout" style="display:none">تسجيل خروج</button>
       <a class="auth-link" id="link-login" href="#">عندك حساب؟ سجّل دخول للمحفظة</a>
@@ -106,6 +107,7 @@
         <span class="team them">لهم <b id="score-them">0</b></span>
       </div>
       <div class="contract" id="contract-badge">—</div>
+      <button class="icon-btn" id="btn-sound" title="الأصوات">🔊</button>
     </header>
 
     <div class="table" id="table">
@@ -165,6 +167,19 @@
     </div>
   </section>
 
-  <script type="module" src="js/ui.js?v=8"></script>
+  <!-- Sound settings (opened from home or the game top bar) -->
+  <div class="panel sound-panel hidden" id="sound-panel">
+    <div class="panel-title">الأصوات والمعلّق</div>
+    <label class="lock-row"><input type="checkbox" id="snd-sfx" /> مؤثرات الصوت</label>
+    <label class="sound-row">مستوى الصوت <input type="range" id="snd-volume" min="0" max="1" step="0.05" /></label>
+    <label class="sound-row">المعلّق</label>
+    <select class="field" id="snd-narrator"></select>
+    <div class="bid-buttons">
+      <button class="btn btn-ghost" id="snd-test">▶ جرّب</button>
+      <button class="btn btn-primary" id="snd-close">تم</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/ui.js?v=9"></script>
 </body>
 </html>

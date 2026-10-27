@@ -169,6 +169,11 @@ body {
 .suit-pick button { font-size: 22px; width: 46px; height: 46px; border-radius: 10px; border: 1px solid rgba(255,255,255,.3); background: var(--card-bg); color: var(--black); cursor: pointer; }
 .suit-pick button.red { color: var(--red); }
 
+.sound-panel { position: fixed; top: 50%; bottom: auto; transform: translate(-50%, -50%); z-index: 30; }
+.sound-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; margin: 10px 0 2px; }
+.sound-row input[type="range"] { flex: 1; accent-color: var(--gold); }
+.sound-panel select option { background: var(--felt-2); }
+
 .result-body { font-size: 15px; line-height: 2; margin-bottom: 14px; }
 .result-body .big { font-size: 22px; font-weight: 800; color: var(--gold); }
 

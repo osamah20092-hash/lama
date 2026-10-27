@@ -1,9 +1,10 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=8";
-import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=8";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=8";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=8";
-import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js?v=8";
-import * as rooms from "./rooms.js?v=8";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=9";
+import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=9";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=9";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=9";
+import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js?v=9";
+import * as rooms from "./rooms.js?v=9";
+import * as audio from "./audio.js?v=9";
 
 const $ = (id) => document.getElementById(id);
 let ME = 0;                   // my seat; the table is drawn relative to it (me at the bottom)
@@ -41,6 +42,23 @@ $("btn-next").onclick = () => {
   if (game.phase === "matchEnd") show("screen-home");
   else { game.nextRound(); maybeBotTurn(); }
 };
+
+// ---------- Sound settings ----------
+function openSoundPanel() {
+  const s = audio.getSettings();
+  $("snd-sfx").checked = s.sfx;
+  $("snd-volume").value = s.volume;
+  $("snd-narrator").innerHTML = audio.narrators()
+    .map((n) => `<option value="${n.id}"${n.id === s.narrator ? " selected" : ""}>${n.name}</option>`).join("");
+  $("sound-panel").classList.remove("hidden");
+}
+$("btn-sound").onclick = openSoundPanel;
+$("btn-sound-home").onclick = openSoundPanel;
+$("snd-close").onclick = () => $("sound-panel").classList.add("hidden");
+$("snd-sfx").onchange = (e) => audio.setSettings({ sfx: e.target.checked });
+$("snd-volume").oninput = (e) => audio.setSettings({ volume: +e.target.value });
+$("snd-narrator").onchange = (e) => { audio.setSettings({ narrator: e.target.value }); audio.say("sun"); };
+$("snd-test").onclick = () => { audio.play("card"); audio.say("hokom"); };
 
 // ---------- Auth wiring ----------
 $("btn-logout").onclick = async () => { await logout(); };
@@ -164,24 +182,45 @@ function enterGameScreen() {
     } : null;
   }
   show("screen-game");
+  audio.play("shuffle");
   render();
 }
 
 // ---------- Event handling ----------
 function onEvent(ev) {
   switch (ev.type) {
-    case "bid": if (ev.seat !== ME && ev.action.kind !== "pass") toast(`${seatName(ev.seat)}: ${bidLabel(ev.action, ev.phase)}`); break;
+    case "round-start": audio.play("shuffle"); break;
+    case "bid": if (ev.seat !== ME && ev.action.kind !== "pass") toast(`${seatName(ev.seat)}: ${bidLabel(ev.action, ev.phase)}`); bidSound(ev.action, ev.phase); break;
     case "contract": toast(contractText(ev.mode, ev.trump) + (ev.declarer === ME ? " · أنت الشاري" : ` · الشاري ${seatName(ev.declarer)}`)); break;
-    case "baloot": toast(`👑 ${ev.seat === ME ? "قلت" : seatName(ev.seat) + ":"} بلوت`, 2600); break;
-    case "declare": toast(`${ev.seat === ME ? "أعلنت" : seatName(ev.seat) + ":"} ${ev.types.map((t) => PROJECT_AR[t]).join(" + ")}`); break;
+    case "baloot": toast(`👑 ${ev.seat === ME ? "قلت" : seatName(ev.seat) + ":"} بلوت`, 2600); audio.play("baloot"); audio.say("baloot"); break;
+    case "declare":
+      toast(`${ev.seat === ME ? "أعلنت" : seatName(ev.seat) + ":"} ${ev.types.map((t) => PROJECT_AR[t]).join(" + ")}`);
+      audio.play("declare");
+      for (const t of ev.types) audio.say(t === "sira" ? "sira" : "p" + t);
+      break;
     case "projects": { const t = projectsText(ev.projects); if (t) toast(t, 3200); break; }
-    case "qaid": toast(`⚖️ ${seatName(ev.seat)} قيّد — ${ev.correct ? "صح!" : "غلط!"}`, 3000); break;
-    case "trick-won": break;
-    case "round-end": showRoundResult(ev); break;
-    case "match-end": showMatchResult(ev); break;
-    case "redeal": toast("الكل باس — توزيع جديد"); break;
+    case "qaid": toast(`⚖️ ${seatName(ev.seat)} قيّد — ${ev.correct ? "صح!" : "غلط!"}`, 3000); audio.say("qaid"); break;
+    // A non-host already heard its own card when it tapped it (sendMove).
+    case "play": if (!(online && !online.isHost && ev.seat === ME)) audio.play("card"); break;
+    case "trick-won": later(() => audio.play("collect"), TRICK_HOLD_MS); break;
+    case "round-end": roundEndSound(ev); showRoundResult(ev); break;
+    case "match-end": audio.play(ev.winner === US() ? "winMatch" : "loseMatch"); showMatchResult(ev); break;
+    case "redeal": toast("الكل باس — توزيع جديد"); audio.say("redeal"); break;
   }
   render();
+}
+
+function bidSound(a, phase) {
+  if (a.kind === "hokom") audio.say(phase === "hokomConfirm" ? "confirm" : phase === "bidding2" ? "hokom_" + a.suit : "hokom");
+  else if (["double", "triple", "four"].includes(a.kind)) { audio.play("double"); audio.say(a.kind); }
+  else if (a.kind === "gahwa") { audio.play("gahwa"); audio.say("gahwa"); }
+  else audio.say(a.kind);   // sun · ashkal · pass
+}
+
+function roundEndSound(ev) {
+  const weWon = ev.winner === US();
+  if (ev.result === "kaboot") { audio.play(weWon ? "kaboot" : "loseRound"); audio.say("kaboot"); }
+  else audio.play(weWon ? "winRound" : "loseRound");
 }
 
 // ---------- Rendering ----------
@@ -200,6 +239,16 @@ function render() {
   renderBidPanel();
   renderActions();
   renderProjectsShow();
+  turnCue();
+}
+
+// A chime when it becomes my turn to bid or play (once per turn, not on every render).
+let wasMyTurn = false;
+function turnCue() {
+  const mine = ME >= 0 && !busy && !trickHeld() &&
+    ((game.phase === "playing" && game.turn === ME) || (BID_PHASES.includes(game.phase) && game.bidTurn === ME));
+  if (mine && !wasMyTurn) audio.play("turn");
+  wasMyTurn = mine;
 }
 
 function renderActions() {
@@ -419,6 +468,7 @@ function sendMove(move) {
     const card = game.hands[ME].find((c) => c.id === move.cardId);
     game.hands[ME] = game.hands[ME].filter((c) => c.id !== move.cardId);
     game.currentTrick = [...game.currentTrick, { seat: ME, card }];
+    audio.play("card");
   }
   busy = true; render();
   rooms.sendAction(online.code, ME, move).catch(() => { busy = false; render(); toast("تعذّر الإرسال، حاول مرة ثانية"); });
@@ -588,7 +638,7 @@ function toast(msg, ms = 1900) {
 // (optional PIN, lock, kick, pick seats/teams) → empty seats become bots → play. No coins.
 // The host's browser runs the real game; see rooms.js for the data flow.
 // =====================================================================
-const PUB_EVENTS = new Set(["bid", "contract", "play-start", "declare", "baloot", "projects", "qaid", "round-end", "match-end", "redeal"]);
+const PUB_EVENTS = new Set(["round-start", "bid", "contract", "play-start", "play", "trick-won", "declare", "baloot", "projects", "qaid", "round-end", "match-end", "redeal"]);
 
 $("btn-private").onclick = () => {
   if (!state.user) {
@@ -902,7 +952,7 @@ async function hostRemoveSeat(i, toBot) {
 function attachHostGame() {
   game.on(onEvent);
   game.on((ev) => {
-    if (PUB_EVENTS.has(ev.type)) online.events = [...online.events, { seq: ++online.seq, ev }].slice(-12);
+    if (PUB_EVENTS.has(ev.type)) online.events = [...online.events, { seq: ++online.seq, ev }].slice(-24);
     schedulePublish();
   });
 }

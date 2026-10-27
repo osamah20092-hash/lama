@@ -12,8 +12,8 @@
 //
 // The host's browser runs the authoritative BalootGame (including the bots) and publishes a
 // public snapshot; every other player renders that snapshot and sends moves as actions.
-import { fire, state as authState } from "./auth.js?v=8";
-import { BalootGame, detectProjects } from "./engine.js?v=8";
+import { fire, state as authState } from "./auth.js?v=9";
+import { BalootGame, detectProjects } from "./engine.js?v=9";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid typos
 export const BOT_NAMES = ["كمبيوتر ١", "كمبيوتر ٢", "كمبيوتر ٣"];
