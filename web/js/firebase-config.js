@@ -5,12 +5,12 @@
 // Until you paste real values, the app runs in GUEST mode (play vs computer only).
 
 export const FIREBASE_CONFIG = {
-  apiKey: "PASTE_API_KEY",
-  authDomain: "PASTE.firebaseapp.com",
-  projectId: "PASTE_PROJECT_ID",
-  storageBucket: "PASTE.appspot.com",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId: "PASTE_APP_ID",
+  apiKey: "AIzaSyCZZBatL5WCb3SRGkIkQq0cIOe8jr789jo",
+  authDomain: "baloot-lamma.firebaseapp.com",
+  projectId: "baloot-lamma",
+  storageBucket: "baloot-lamma.firebasestorage.app",
+  messagingSenderId: "976251255807",
+  appId: "1:976251255807:web:f008d4580571c6cb9e45ca",
 };
 
 // Email(s) that act as ADMIN (can manage every account's balance).
