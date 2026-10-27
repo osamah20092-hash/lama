@@ -20,6 +20,7 @@ export const RANK_LABEL = { "7": "7", "8": "8", "9": "9", "10": "10", J: "J", Q:
 export const ORDER_SUN      = ["A", "10", "K", "Q", "J", "9", "8", "7"]; // no-trump
 export const ORDER_TRUMP    = ["J", "9", "A", "10", "K", "Q", "8", "7"]; // trump suit in Hokom
 export const ORDER_PLAIN    = ["A", "10", "K", "Q", "J", "9", "8", "7"]; // non-trump suit in Hokom
+export const ORDER_SEQ      = ["A", "K", "Q", "J", "10", "9", "8", "7"]; // sequences for projects (سرا/خمسين/مية)
 
 // --- Card point values ---
 export const POINTS_SUN   = { A: 11, "10": 10, K: 4, Q: 3, J: 2, "9": 0, "8": 0, "7": 0 };      // ×? handled in scoring

@@ -1,29 +1,45 @@
 // Simple heuristic computer player for Baloot. Not world-class, but plays sensibly:
 // bids on strong hands, follows the rules, wins tricks it can cheaply, and dumps low otherwise.
-import { cardStrength, cardPoints, SUITS } from "./deck.js";
+import { cardStrength, cardPoints } from "./deck.js";
 import { TEAM_OF } from "./engine.js";
 
 // --- Bidding ---
 export function chooseBid(game, seat) {
   const hand = game.hands[seat];
-
-  if (game.phase === "bidding1") {
-    // Buy the flipped suit as trump if we have good strength in it.
-    const suit = game.flip.suit;
-    const strength = suitHokomStrength(hand, suit);
-    return strength >= 9 ? { kind: "hokom-flip" } : { kind: "pass" };
-  }
-
-  // bidding2: choose Sun, Hokom (best suit), or pass.
+  const legal = game.legalBids(seat);
+  const can = (kind) => legal.find((a) => a.kind === kind);
   const sunScore = sunStrength(hand);
-  let bestSuit = null, bestVal = -1;
-  for (const s of SUITS) {
-    const v = suitHokomStrength(hand, s);
-    if (v > bestVal) { bestVal = v; bestSuit = s; }
+
+  switch (game.phase) {
+    case "bidding1": {
+      // Buy the flipped suit as trump if we have good strength in it; Sun on a very strong hand.
+      if (sunScore >= 13) return { kind: "sun" };
+      return suitHokomStrength(hand, game.flip.suit) >= 9 ? can("hokom") : { kind: "pass" };
+    }
+    case "bidding2": {
+      let best = null, bestVal = -1;
+      for (const a of legal.filter((x) => x.kind === "hokom")) {
+        const v = suitHokomStrength(hand, a.suit);
+        if (v > bestVal) { bestVal = v; best = a; }
+      }
+      if (bestVal >= 10) return best;
+      if (sunScore >= 11) return { kind: "sun" };
+      if (bestVal >= 8) return best;
+      return { kind: "pass" };
+    }
+    case "sunCheck":     // someone bought Hokom: overcall with Sun only on a strong hand
+      return sunScore >= 13 ? { kind: "sun" } : { kind: "pass" };
+    case "hokomConfirm":
+      return sunScore >= 14 ? { kind: "sun" } : can("hokom");
+    case "doubling": {
+      // Defenders double on a strong hand; buyers raise only when very strong. Never قهوة.
+      const v = game.mode === "sun" ? sunScore : suitHokomStrength(hand, game.trump);
+      if (game.multiplier === 1 && v >= (game.mode === "sun" ? 14 : 10)) return { kind: "double", locked: false };
+      if (game.multiplier === 2 && v >= 14) return { kind: "triple" };
+      if (game.multiplier === 3 && v >= 12) return { kind: "four", locked: false };
+      return { kind: "pass" };
+    }
   }
-  if (bestVal >= 10) return { kind: "hokom", suit: bestSuit };
-  if (sunScore >= 11) return { kind: "sun" };
-  if (bestVal >= 8) return { kind: "hokom", suit: bestSuit };
   return { kind: "pass" };
 }
 

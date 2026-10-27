@@ -1,4 +1,4 @@
-import { BalootGame, TEAM_OF } from "./engine.js";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js";
 import { chooseBid, chooseCard } from "./ai.js";
 import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS } from "./deck.js";
 import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js";
@@ -125,7 +125,9 @@ async function startGame() {
 // ---------- Event handling ----------
 function onEvent(ev) {
   switch (ev.type) {
-    case "contract": toast(contractText(ev.mode, ev.trump) + (ev.declarer === HUMAN ? " · أنت الشاري" : "")); break;
+    case "bid": if (ev.seat !== HUMAN && ev.action.kind !== "pass") toast(`${seatName(ev.seat)}: ${bidLabel(ev.action)}`); break;
+    case "contract": toast(contractText(ev.mode, ev.trump) + (ev.declarer === HUMAN ? " · أنت الشاري" : ` · الشاري ${seatName(ev.declarer)}`)); break;
+    case "play-start": { const t = playStartText(ev); if (t) toast(t, 3200); break; }
     case "trick-won": break;
     case "round-end": showRoundResult(ev); break;
     case "match-end": showMatchResult(ev); break;
@@ -139,7 +141,7 @@ function render() {
   if (!game) return;
   $("score-us").textContent = game.score.A;
   $("score-them").textContent = game.score.B;
-  $("contract-badge").textContent = game.mode ? contractText(game.mode, game.trump) : "—";
+  $("contract-badge").textContent = game.mode ? contractText(game.mode, game.trump) + multText(game) : "—";
 
   renderHand();
   renderOpponents();
@@ -211,41 +213,72 @@ function renderTurn() {
   const names = { 0: "دورك", 1: "دور اليمين", 2: "دور شريكك", 3: "دور اليسار" };
   $("turn-indicator").textContent =
     game.phase === "playing" ? (names[game.turn] || "") :
-    game.phase.startsWith("bidding") ? "المزايدة" : "";
+    BID_PHASES.includes(game.phase) ? (game.phase === "doubling" ? "الدبل" : "المزايدة") : "";
 }
 
 // ---------- Bidding UI ----------
+const SEAT_NAME = { 0: "أنت", 1: "يمين", 2: "شريكك", 3: "يسار" };
+// Online: the real player names (seat 0 is always "you").
+const seatName = (s) => (s !== HUMAN && game && game.online ? game.seatName(s) : SEAT_NAME[s]);
+
+function bidLabel(a) {
+  switch (a.kind) {
+    case "hokom": return "حكم " + SUIT_INFO[a.suit].symbol;
+    case "sun": return "صن";
+    case "ashkal": return "أشكال";
+    case "pass": return "بس";
+    case "double": return game.mode === "sun" ? "دبل" : a.locked ? "دبل مقفول" : "دبل مفتوح";
+    case "triple": return "ثري";
+    case "four": return a.locked ? "فور مقفول" : "فور مفتوح";
+    case "gahwa": return "قهوة ☕";
+  }
+  return a.kind;
+}
+
+function bidTitle() {
+  switch (game.phase) {
+    case "bidding1": return "الدور الأول — تشتري؟";
+    case "bidding2": return "الدور الثاني — حكم ثاني أو صن";
+    case "sunCheck": return `${seatName(game.hokomBidder)} اشترى حكم — تبي صن؟`;
+    case "hokomConfirm": return "تثبّت الحكم أو تحوّل صن؟";
+    case "doubling": return contractText(game.mode, game.trump) + " · " +
+      ({ 1: "تدبل؟", 2: "الخصم دبل — ترد ثري؟", 3: "ردّوا ثري — ترد فور؟", 4: "ردّوا فور — ترد قهوة؟" })[game.multiplier];
+  }
+  return "المزايدة";
+}
+
 function renderBidPanel() {
   const panel = $("bid-panel");
-  const isBidding = game.phase === "bidding1" || game.phase === "bidding2";
-  const showForHuman = isBidding && game.bidTurn === HUMAN && !busy;
+  const showForHuman = BID_PHASES.includes(game.phase) && game.bidTurn === HUMAN && !busy;
   if (!showForHuman) { panel.classList.add("hidden"); return; }
   panel.classList.remove("hidden");   // keep the hand visible so you can judge your cards
 
-  const info = SUIT_INFO[game.flip.suit];   // used for the "حكم ♥" button label
+  // The revealed card is already in the buyer's hand once doubling starts.
   const flip = $("flip-card");
   flip.className = "flip-card";
+  flip.style.display = game.phase === "doubling" ? "none" : "";
   flip.innerHTML = `<img class="card-face" src="${cardSrc(game.flip)}" alt="" draggable="false">`;
 
-  $("bid-title").textContent = game.phase === "bidding1" ? "تشتري حكم؟" : "اختر العقد";
+  $("bid-title").textContent = bidTitle();
   const box = $("bid-buttons");
   box.innerHTML = "";
 
-  if (game.phase === "bidding1") {
-    addBidBtn(box, `حكم ${info.symbol}`, "btn-primary", () => doBid({ kind: "hokom-flip" }));
-    addBidBtn(box, "بس", "btn-ghost", () => doBid({ kind: "pass" }));
-  } else {
-    addBidBtn(box, "صن", "btn-primary", () => doBid({ kind: "sun" }));
-    addBidBtn(box, "بس", "btn-ghost", () => doBid({ kind: "pass" }));
+  const legal = game.legalBids(HUMAN);
+  const suitBids = game.phase === "bidding2" ? legal.filter((a) => a.kind === "hokom") : [];
+  for (const a of legal) {
+    if (suitBids.includes(a)) continue;
+    addBidBtn(box, bidLabel(a), a.kind === "pass" ? "btn-ghost" : "btn-primary", () => doBid(a));
+  }
+  if (suitBids.length) {
     const pick = document.createElement("div");
     pick.className = "suit-pick";
-    for (const s of SUITS) {
-      const si = SUIT_INFO[s];
+    for (const a of suitBids) {
+      const si = SUIT_INFO[a.suit];
       const b = document.createElement("button");
       b.className = si.color === "red" ? "red" : "";
       b.textContent = si.symbol;
       b.title = "حكم " + si.ar;
-      b.onclick = () => doBid({ kind: "hokom", suit: s });
+      b.onclick = () => doBid(a);
       pick.appendChild(b);
     }
     box.appendChild(pick);
@@ -274,7 +307,7 @@ function onHumanPlay(cardId) {
 // ---------- Bot driver ----------
 function maybeBotTurn() {
   // Bidding bots
-  if ((game.phase === "bidding1" || game.phase === "bidding2") && game.bidTurn !== HUMAN) {
+  if (BID_PHASES.includes(game.phase) && game.bidTurn !== HUMAN) {
     busy = true; render();
     setTimeout(() => {
       const action = chooseBid(game, game.bidTurn);
@@ -305,13 +338,19 @@ function afterPlayFlow() {
 }
 
 // ---------- Results ----------
+const RESULT_TITLE = { normal: "نهاية الجولة", khasara: "قهر! الشاري خسر 🔥", doubled: "نتيجة الدبل", kaboot: "كبوت! 🔥" };
+
 function showRoundResult(ev) {
   const panel = $("result-panel");
-  $("result-title").textContent = ev.result === "baqi" ? "بقى! 🔥" : "نهاية الجولة";
-  const usRaw = ev.raw.A, themRaw = ev.raw.B;
+  let title = RESULT_TITLE[ev.result];
+  if (ev.result === "kaboot") title = ev.winner === "A" ? "كبوت لنا! 🔥" : "كبوت علينا!";
+  $("result-title").textContent = title;
+  const line = (label, a, b) => (a || b) ? `${label} — لنا ${a} · لهم ${b}<br>` : "";
   $("result-body").innerHTML =
-    `العقد: <b>${contractText(game.mode, game.trump)}</b><br>` +
-    `نقاط الأكلات — لنا ${usRaw} · لهم ${themRaw}<br>` +
+    `العقد: <b>${contractText(game.mode, game.trump)}${multText(game)}</b><br>` +
+    line("الأبناط", ev.raw.A, ev.raw.B) +
+    line("المشاريع", ev.proj.A, ev.proj.B) +
+    line("البلوت", ev.bal.A, ev.bal.B) +
     `<span class="big">لنا +${ev.gp.A} · لهم +${ev.gp.B}</span><br>` +
     `المجموع: لنا ${game.score.A} · لهم ${game.score.B}`;
   $("btn-next").textContent = "الجولة التالية";
@@ -343,13 +382,29 @@ async function showMatchResult(ev) {
 }
 
 // ---------- Helpers ----------
+function multText(g) {
+  if (g.gahwa) return " · قهوة ☕";
+  const m = { 2: " · دبل", 3: " · ثري", 4: " · فور" }[g.multiplier] || "";
+  return m && g.mode === "hokom" && g.multiplier !== 3 ? m + (g.locked ? " مقفول" : " مفتوح") : m;
+}
+
+function playStartText(ev) {
+  const parts = [];
+  if (ev.projects.length) {
+    const who = TEAM_OF(ev.projects[0].seat) === "A" ? "لنا" : "لهم";
+    parts.push(`مشاريع ${who}: ` + ev.projects.map((p) => `${PROJECT_AR[p.type]} (${seatName(p.seat)})`).join("، "));
+  }
+  if (ev.balootSeat !== null) parts.push(`بلوت مع ${seatName(ev.balootSeat)}`);
+  return parts.join(" · ");
+}
+
 function contractText(mode, trump) {
   if (mode === "sun") return "صن";
   if (mode === "hokom") return "حكم " + (trump ? SUIT_INFO[trump].symbol : "");
   return "—";
 }
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 1900) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 1900);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), ms);
 }
