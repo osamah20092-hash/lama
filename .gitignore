@@ -1,0 +1,35 @@
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.sln
+*.user
+*.booproj
+*.unityproj
+
+# Builds / packages
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# Secrets — never commit real keys
+google-services.json
+GoogleService-Info.plist
+Assets/Resources/AppConfig.asset
+Assets/Resources/AppConfig.asset.meta
+backend/agora-token-server/.env
+backend/agora-token-server/node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
