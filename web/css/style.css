@@ -304,3 +304,13 @@ body {
   #screen-game { --cw: min(52px, 10vh + 8px); }
   .seat .avatar { width: 32px; height: 32px; font-size: 16px; }
 }
+
+/* Completed trick: highlight the winning card while it stays on the table */
+.trick-card.win { outline: 3px solid var(--gold); box-shadow: 0 0 18px rgba(232,196,92,.8); }
+
+/* Declared projects shown to everyone during the second trick */
+.proj-show { position: absolute; z-index: 4; top: 26%; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; background: rgba(0,0,0,.72); border: 1px solid rgba(232,196,92,.5); border-radius: 12px; padding: 8px 10px; max-width: 94vw; }
+.proj-show.hidden { display: none; }
+.proj-row { display: flex; align-items: center; gap: 3px; font-size: 13px; white-space: nowrap; }
+.proj-row b { color: var(--gold); margin-inline-end: 6px; }
+.proj-row img { width: 26px; height: 38px; border-radius: 3px; background: #fff; }

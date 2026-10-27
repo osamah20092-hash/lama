@@ -12,8 +12,8 @@
 //
 // The host's browser runs the authoritative BalootGame (including the bots) and publishes a
 // public snapshot; every other player renders that snapshot and sends moves as actions.
-import { fire, state as authState } from "./auth.js?v=6";
-import { BalootGame, detectProjects } from "./engine.js?v=6";
+import { fire, state as authState } from "./auth.js?v=7";
+import { BalootGame, detectProjects } from "./engine.js?v=7";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid typos
 export const BOT_NAMES = ["كمبيوتر ١", "كمبيوتر ٢", "كمبيوتر ٣"];
@@ -196,6 +196,9 @@ export function publicState(g) {
   pub.trickNo = g.tricks.length;
   // Declared projects are announced by type only; the cards stay hidden.
   pub.declared = g.projects.map((p) => ({ seat: p.seat, type: p.type }));
+  // From the second trick the counted projects are shown to everyone, cards included.
+  pub.shownProjects = g.tricks.length ? g.countedProjects().map((p) => ({ seat: p.seat, type: p.type, cards: p.cards })) : [];
+  pub.lastTrick = g.tricks[g.tricks.length - 1] || null;   // so players see the completed trick
   return pub;
 }
 
@@ -207,6 +210,8 @@ export function viewGame(pub, mySeat, myCards) {
   g.hands = pub.handCounts.map((n, s) => (s === mySeat ? myCards.slice() : new Array(n).fill(null)));
   // Enough for canDeclare(mySeat): my candidates come from my own 8-card hand.
   g.tricks = new Array(pub.trickNo || 0).fill(null);
+  if (pub.lastTrick && g.tricks.length) g.tricks[g.tricks.length - 1] = pub.lastTrick;
+  g.countedProjects = () => pub.shownProjects || [];
   g.projects = pub.declared || [];
   g.projectCandidates = [0, 1, 2, 3].map((s) =>
     s === mySeat && pub.mode && myCards.length === 8 ? detectProjects(myCards, pub.mode) : []);

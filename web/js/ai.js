@@ -1,7 +1,7 @@
 // Simple heuristic computer player for Baloot. Not world-class, but plays sensibly:
 // bids on strong hands, follows the rules, wins tricks it can cheaply, and dumps low otherwise.
-import { cardStrength, cardPoints } from "./deck.js?v=6";
-import { TEAM_OF } from "./engine.js?v=6";
+import { cardStrength, cardPoints } from "./deck.js?v=7";
+import { TEAM_OF } from "./engine.js?v=7";
 
 // --- Bidding ---
 export function chooseBid(game, seat) {

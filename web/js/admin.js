@@ -1,7 +1,7 @@
 // Admin panel: list accounts and adjust balances. Only an admin (by ADMIN_EMAILS,
 // enforced by Firestore rules) can actually write — non-admins get permission errors.
-import { initFirebase, onUserChange, listUsers, adjustCoins, setCoins, state } from "./auth.js?v=6";
-import { isConfigured } from "./firebase-config.js?v=6";
+import { initFirebase, onUserChange, listUsers, adjustCoins, setCoins, state } from "./auth.js?v=7";
+import { isConfigured } from "./firebase-config.js?v=7";
 
 const $ = (id) => document.getElementById(id);
 

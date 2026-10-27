@@ -1,9 +1,9 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=6";
-import { chooseBid, chooseCard } from "./ai.js?v=6";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=6";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=6";
-import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js?v=6";
-import * as rooms from "./rooms.js?v=6";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=7";
+import { chooseBid, chooseCard } from "./ai.js?v=7";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=7";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=7";
+import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js?v=7";
+import * as rooms from "./rooms.js?v=7";
 
 const $ = (id) => document.getElementById(id);
 let ME = 0;                   // my seat; the table is drawn relative to it (me at the bottom)
@@ -197,6 +197,7 @@ function render() {
   renderTurn();
   renderBidPanel();
   renderActions();
+  renderProjectsShow();
 }
 
 function renderActions() {
@@ -234,7 +235,7 @@ function renderHand() {
   wrap.innerHTML = "";
   const hand = sortHand(game.hands[ME]);
   const legalIds = new Set(
-    (game.phase === "playing" && game.turn === ME && !busy ? game.legalMoves(ME) : []).map((c) => c.id)
+    (game.phase === "playing" && game.turn === ME && !busy && !trickHeld() ? game.legalMoves(ME) : []).map((c) => c.id)
   );
   for (const card of hand) {
     const playable = legalIds.has(card.id);
@@ -266,15 +267,40 @@ function renderOpponents() {
   }
 }
 
+// A completed trick stays on the table for TRICK_HOLD_MS (winner highlighted) before it's collected.
+const TRICK_HOLD_MS = 2000;
+let trickHold = { n: 0, until: 0 };
+// True while the just-completed trick is on display (the next leader can't play yet).
+function trickHeld() {
+  const n = game.tricks.length;
+  if (game.currentTrick.length || !n || !game.tricks[n - 1]) return false;
+  if (trickHold.n !== n) { trickHold = { n, until: Date.now() + TRICK_HOLD_MS }; later(render, TRICK_HOLD_MS + 50); }
+  return Date.now() < trickHold.until;
+}
+
 function renderTrick() {
   const area = $("trick-area");
   area.innerHTML = "";
-  for (const p of game.currentTrick) {
+  let plays = game.currentTrick, winner = null;
+  const last = game.tricks[game.tricks.length - 1];
+  if (!plays.length && last && (trickHeld() || game.phase !== "playing")) { plays = last.cards; winner = last.winner; }
+  for (const p of plays) {
     const el = document.createElement("div");
-    el.className = `trick-card tc-${rel(p.seat)}`;
+    el.className = `trick-card tc-${rel(p.seat)}` + (p.seat === winner ? " win" : "");
     el.innerHTML = `<img class="card-face" src="${cardSrc(p.card)}" alt="" draggable="false">`;
     area.appendChild(el);
   }
+}
+
+// Second trick: the counted projects are shown to everyone, with their cards.
+function renderProjectsShow() {
+  const box = $("proj-show");
+  const show = game.phase === "playing" && game.tricks.length === 1 ? game.countedProjects() : [];
+  box.classList.toggle("hidden", !show.length);
+  if (!show.length) return;
+  box.innerHTML = show.map((p) =>
+    `<div class="proj-row"><b>${p.seat === ME ? "أنت" : seatName(p.seat)}: ${PROJECT_AR[p.type]}</b>` +
+    p.cards.map((c) => `<img src="${cardSrc(c)}" alt="">`).join("") + "</div>").join("");
 }
 
 function renderTurn() {
@@ -377,6 +403,12 @@ function onHumanPlay(cardId) {
 
 // Non-host: send the move to the host and wait for the next snapshot.
 function sendMove(move) {
+  if (move.kind === "play") {
+    // Show my card on the table right away; the host's next snapshot confirms it.
+    const card = game.hands[ME].find((c) => c.id === move.cardId);
+    game.hands[ME] = game.hands[ME].filter((c) => c.id !== move.cardId);
+    game.currentTrick = [...game.currentTrick, { seat: ME, card }];
+  }
   busy = true; render();
   rooms.sendAction(online.code, ME, move).catch(() => { busy = false; render(); toast("تعذّر الإرسال، حاول مرة ثانية"); });
 }
@@ -441,7 +473,9 @@ function maybeBotTurn() {
 function afterPlayFlow() {
   if (!game || game.phase !== "playing") return;
   if (!isBot(game.turn)) { render(); return; }
-  botLater(700, () => {
+  // Leading a new trick: wait until the finished one has been seen by everyone.
+  const leading = !game.currentTrick.length && game.tricks.length;
+  botLater(leading ? TRICK_HOLD_MS + 300 : 700, () => {
     if (game.phase !== "playing" || !isBot(game.turn)) return;
     game.declareProjects(game.turn);   // bots never forget their projects
     game.play(game.turn, chooseCard(game, game.turn).id);
