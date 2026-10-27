@@ -1,6 +1,6 @@
 import { BalootGame, TEAM_OF } from "./engine.js";
 import { chooseBid, chooseCard } from "./ai.js";
-import { SUIT_INFO, RANK_AR, SUITS } from "./deck.js";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS } from "./deck.js";
 import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js";
 import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js";
 
@@ -148,14 +148,12 @@ function render() {
   renderBidPanel();
 }
 
+function cardSrc(card) { return `assets/cards/${card.rank}_${card.suit}.svg`; }
+
 function cardEl(card, { playable = false } = {}) {
-  const info = SUIT_INFO[card.suit];
   const el = document.createElement("div");
-  el.className = "card" + (info.color === "red" ? " red" : "") + (playable ? " playable" : "");
-  el.innerHTML =
-    `<div class="cap">${RANK_AR[card.rank]}<br>${info.symbol}</div>` +
-    `<div class="pip">${info.symbol}</div>` +
-    `<div class="cap bottom">${RANK_AR[card.rank]}<br>${info.symbol}</div>`;
+  el.className = "card" + (playable ? " playable" : "");
+  el.innerHTML = `<img class="card-face" src="${cardSrc(card)}" alt="" draggable="false">`;
   return el;
 }
 
@@ -170,7 +168,7 @@ function renderHand() {
     const playable = legalIds.has(card.id);
     const el = cardEl(card, { playable });
     if (playable) el.onclick = () => onHumanPlay(card.id);
-    else el.classList.add("disabled");
+    else if (game.phase === "playing") el.classList.add("disabled"); // dim only during play
     wrap.appendChild(el);
   }
 }
@@ -202,10 +200,9 @@ function renderTrick() {
   const area = $("trick-area");
   area.innerHTML = "";
   for (const p of game.currentTrick) {
-    const info = SUIT_INFO[p.card.suit];
     const el = document.createElement("div");
-    el.className = `trick-card tc-${p.seat}` + (info.color === "red" ? " red" : "");
-    el.innerHTML = `${RANK_AR[p.card.rank]}${info.symbol}`;
+    el.className = `trick-card tc-${p.seat}`;
+    el.innerHTML = `<img class="card-face" src="${cardSrc(p.card)}" alt="" draggable="false">`;
     area.appendChild(el);
   }
 }
@@ -222,14 +219,12 @@ function renderBidPanel() {
   const panel = $("bid-panel");
   const isBidding = game.phase === "bidding1" || game.phase === "bidding2";
   const showForHuman = isBidding && game.bidTurn === HUMAN && !busy;
-  document.querySelector(".myhand-wrap").style.visibility = showForHuman ? "hidden" : "visible";
   if (!showForHuman) { panel.classList.add("hidden"); return; }
-  panel.classList.remove("hidden");
+  panel.classList.remove("hidden");   // keep the hand visible so you can judge your cards
 
-  const info = SUIT_INFO[game.flip.suit];
   const flip = $("flip-card");
-  flip.className = "flip-card" + (info.color === "red" ? " red" : "");
-  flip.innerHTML = `${RANK_AR[game.flip.rank]}${info.symbol}`;
+  flip.className = "flip-card";
+  flip.innerHTML = `<img class="card-face" src="${cardSrc(game.flip)}" alt="" draggable="false">`;
 
   $("bid-title").textContent = game.phase === "bidding1" ? "تشتري حكم؟" : "اختر العقد";
   const box = $("bid-buttons");

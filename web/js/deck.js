@@ -13,6 +13,8 @@ export const SUIT_INFO = {
 export const RANKS = ["7", "8", "9", "10", "J", "Q", "K", "A"];
 
 export const RANK_AR = { "7": "٧", "8": "٨", "9": "٩", "10": "١٠", J: "ولد", Q: "بنت", K: "شايب", A: "إيس" };
+// Standard international rank labels shown on the cards.
+export const RANK_LABEL = { "7": "7", "8": "8", "9": "9", "10": "10", J: "J", Q: "Q", K: "K", A: "A" };
 
 // --- Ranking orders (index 0 = strongest) ---
 export const ORDER_SUN      = ["A", "10", "K", "Q", "J", "9", "8", "7"]; // no-trump
