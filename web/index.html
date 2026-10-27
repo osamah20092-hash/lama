@@ -44,11 +44,49 @@
         <div class="stake-chips" id="stake-chips"></div>
       </div>
       <button class="btn btn-primary" id="btn-play-cpu">🎮 العب ضد الكمبيوتر</button>
+      <button class="btn btn-primary" id="btn-private">👥 جلسة خاصة مع ربعك</button>
       <button class="btn btn-ghost" id="btn-how">❔ كيف ألعب</button>
       <button class="btn btn-ghost" id="btn-admin" style="display:none">🛠️ لوحة الإدارة</button>
       <button class="btn btn-ghost" id="btn-logout" style="display:none">تسجيل خروج</button>
       <a class="auth-link" id="link-login" href="#">عندك حساب؟ سجّل دخول للمحفظة</a>
       <div class="home-foot">بلوت لمّة · نسخة تجريبية</div>
+    </div>
+  </section>
+
+  <!-- Private session: create / join -->
+  <section id="screen-room-menu" class="screen">
+    <div class="home-card">
+      <h2 class="section-title">جلسة خاصة</h2>
+      <p class="hint">جلسة ودّية بينك وبين ربعك: ما فيها رهان ولا كوينز. تنشئ الجلسة وترسل الرمز أو الرابط، وأي مقعد يبقى فاضي يكمّله الكمبيوتر.</p>
+      <input class="field code-field" id="create-pin" type="text" inputmode="numeric" maxlength="4" placeholder="رمز سري (اختياري، ٤ أرقام)" />
+      <button class="btn btn-primary" id="btn-create-room">➕ أنشئ جلسة</button>
+      <div class="join-row">
+        <input class="field code-field" id="join-code" type="text" maxlength="6" placeholder="رمز الجلسة" autocomplete="off" />
+        <button class="btn btn-primary" id="btn-join-room">انضم</button>
+      </div>
+      <input class="field code-field" id="join-pin" type="text" inputmode="numeric" maxlength="4" placeholder="الرمز السري" style="display:none" />
+      <div class="auth-error" id="room-error"></div>
+      <button class="btn btn-ghost" id="btn-room-back">رجوع</button>
+    </div>
+  </section>
+
+  <!-- Private session: waiting hall -->
+  <section id="screen-lobby" class="screen">
+    <div class="home-card">
+      <div class="lobby-head">رمز الجلسة</div>
+      <div class="room-code" id="lobby-code">——</div>
+      <div class="share-row">
+        <button class="btn btn-ghost" id="btn-copy-link">🔗 نسخ الرابط</button>
+        <button class="btn btn-ghost" id="btn-share-wa">واتساب</button>
+      </div>
+      <div class="lobby-seats">
+        <div class="lobby-team"><div class="lobby-team-title">الفريق الأول</div><div id="lobby-seat-0"></div><div id="lobby-seat-2"></div></div>
+        <div class="lobby-team"><div class="lobby-team-title">الفريق الثاني</div><div id="lobby-seat-1"></div><div id="lobby-seat-3"></div></div>
+      </div>
+      <label class="lock-row" id="lock-row" style="display:none"><input type="checkbox" id="lobby-lock" /> 🔒 قفل الجلسة (ما أحد جديد يدخل)</label>
+      <div class="lobby-status" id="lobby-status"></div>
+      <button class="btn btn-primary" id="btn-start-room" style="display:none">ابدأ اللعب</button>
+      <button class="btn btn-ghost" id="btn-leave-room">خروج من الجلسة</button>
     </div>
   </section>
 
@@ -112,6 +150,6 @@
     </div>
   </section>
 
-  <script type="module" src="js/ui.js?v=4"></script>
+  <script type="module" src="js/ui.js?v=5"></script>
 </body>
 </html>

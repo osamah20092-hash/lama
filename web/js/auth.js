@@ -31,6 +31,9 @@ export async function initFirebase() {
   return true;
 }
 
+// Raw Firestore handle + SDK functions, for modules that need more than the wallet (rooms.js).
+export function fire() { return { db, fns }; }
+
 // Subscribe to sign-in/out. cb(user|null) runs on every change.
 export function onUserChange(cb) {
   if (!state.configured) { cb(null); return; }

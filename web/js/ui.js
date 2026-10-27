@@ -3,13 +3,21 @@ import { chooseBid, chooseCard } from "./ai.js";
 import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS } from "./deck.js";
 import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js";
 import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js";
+import * as rooms from "./rooms.js";
 
-const HUMAN = 0;              // the human player's seat
 const $ = (id) => document.getElementById(id);
+let ME = 0;                   // my seat; the table is drawn relative to it (me at the bottom)
 let game = null;
 let busy = false;             // prevents input while bots act / animations run
 let currentStake = 0;         // chosen stake for the next match
 let matchStake = 0;           // stake locked in for the running match
+let online = null;            // private session state (see "Private sessions" below), null offline
+
+const rel = (s) => (s - ME + 4) % 4;                 // 0 me · 1 right · 2 partner · 3 left
+const US = () => TEAM_OF(ME);
+const THEM = () => (US() === "A" ? "B" : "A");
+// Seats this browser plays automatically: offline every seat but mine; online (host) the bot seats.
+const isBot = (s) => (online ? !!online.seats[s]?.bot : s !== ME);
 
 // ---------- Screen routing ----------
 function show(screen) {
@@ -19,8 +27,20 @@ function show(screen) {
 $("btn-play-cpu").onclick = startGame;
 $("btn-how").onclick = () => show("screen-how");
 $("btn-how-back").onclick = () => show("screen-home");
-$("btn-home").onclick = () => { show("screen-home"); };
-$("btn-next").onclick = () => { $("result-panel").classList.add("hidden"); if (game.phase === "matchEnd") show("screen-home"); else { game.nextRound(); } };
+$("btn-home").onclick = () => {
+  if (!online) { show("screen-home"); return; }
+  if (confirm(online.isHost ? "تبي تنهي الجلسة للكل؟" : "تبي تطلع من الجلسة؟ الكمبيوتر بيكمّل مكانك.")) exitRoom();
+};
+$("btn-next").onclick = () => {
+  $("result-panel").classList.add("hidden");
+  if (online) {
+    if (game.phase === "matchEnd") { if (online.isHost) hostBackToLobby(); else show("screen-lobby"); }
+    else if (online.isHost) { game.nextRound(); maybeBotTurn(); }
+    return;
+  }
+  if (game.phase === "matchEnd") show("screen-home");
+  else { game.nextRound(); maybeBotTurn(); }
+};
 
 // ---------- Auth wiring ----------
 $("btn-logout").onclick = async () => { await logout(); };
@@ -101,8 +121,15 @@ async function boot() {
   const configured = await initFirebase();
   if (!configured) { renderWallet(null); show("screen-home"); return; } // guest mode
   onUserChange((user) => {
-    if (user) { renderWallet(state.profile); show("screen-home"); }
-    else { renderWallet(null); show("screen-auth"); }
+    // Fires on every profile update too (e.g. coins) — only route away from splash/auth.
+    const routing = $("screen-splash").classList.contains("active") || $("screen-auth").classList.contains("active");
+    if (user) {
+      renderWallet(state.profile);
+      if (routing) { show("screen-home"); openInviteLink(); }
+    } else {
+      if (online) exitRoom();
+      renderWallet(null); show("screen-auth");
+    }
   });
 }
 boot();
@@ -115,18 +142,35 @@ async function startGame() {
     try { await placeStake(currentStake); matchStake = currentStake; }
     catch (e) { alert("تعذّر حجز الرهان، حاول مرة ثانية"); return; }
   }
+  ME = 0;
   game = new BalootGame({ targetScore: 152 });
   game.on(onEvent);
+  enterGameScreen();
+  maybeBotTurn();
+}
+
+function enterGameScreen() {
+  $("result-panel").classList.add("hidden");
+  for (const r of [1, 2, 3]) {
+    const s = (ME + r) % 4;
+    const seat = $("seat-" + r);
+    const occ = online ? online.seats[s] : null;
+    seat.querySelector(".avatar").textContent = !online || occ?.bot ? "🤖" : "👤";
+    seat.querySelector(".name").textContent = online ? (occ?.name || "—") : SEAT_NAME[r];
+    // Host: tap a player who dropped off to hand their seat to the computer.
+    seat.onclick = online?.isHost && occ && !occ.bot ? () => {
+      if (confirm(`تحوّل ${occ.name} للكمبيوتر؟`)) hostRemoveSeat(s, true);
+    } : null;
+  }
   show("screen-game");
   render();
-  maybeBotTurn();
 }
 
 // ---------- Event handling ----------
 function onEvent(ev) {
   switch (ev.type) {
-    case "bid": if (ev.seat !== HUMAN && ev.action.kind !== "pass") toast(`${seatName(ev.seat)}: ${bidLabel(ev.action)}`); break;
-    case "contract": toast(contractText(ev.mode, ev.trump) + (ev.declarer === HUMAN ? " · أنت الشاري" : ` · الشاري ${seatName(ev.declarer)}`)); break;
+    case "bid": if (ev.seat !== ME && ev.action.kind !== "pass") toast(`${seatName(ev.seat)}: ${bidLabel(ev.action)}`); break;
+    case "contract": toast(contractText(ev.mode, ev.trump) + (ev.declarer === ME ? " · أنت الشاري" : ` · الشاري ${seatName(ev.declarer)}`)); break;
     case "play-start": { const t = playStartText(ev); if (t) toast(t, 3200); break; }
     case "trick-won": break;
     case "round-end": showRoundResult(ev); break;
@@ -139,8 +183,8 @@ function onEvent(ev) {
 // ---------- Rendering ----------
 function render() {
   if (!game) return;
-  $("score-us").textContent = game.score.A;
-  $("score-them").textContent = game.score.B;
+  $("score-us").textContent = game.score[US()];
+  $("score-them").textContent = game.score[THEM()];
   $("contract-badge").textContent = game.mode ? contractText(game.mode, game.trump) + multText(game) : "—";
 
   renderHand();
@@ -162,9 +206,9 @@ function cardEl(card, { playable = false } = {}) {
 function renderHand() {
   const wrap = $("hand-0");
   wrap.innerHTML = "";
-  const hand = sortHand(game.hands[HUMAN]);
+  const hand = sortHand(game.hands[ME]);
   const legalIds = new Set(
-    (game.phase === "playing" && game.turn === HUMAN && !busy ? game.legalMoves(HUMAN) : []).map((c) => c.id)
+    (game.phase === "playing" && game.turn === ME && !busy ? game.legalMoves(ME) : []).map((c) => c.id)
   );
   for (const card of hand) {
     const playable = legalIds.has(card.id);
@@ -185,16 +229,14 @@ function sortHand(hand) {
 }
 
 function renderOpponents() {
-  for (const s of [1, 2, 3]) {
-    const el = $("hand-" + s);
+  for (const r of [1, 2, 3]) {
+    const s = (ME + r) % 4;
+    const el = $("hand-" + r);
     el.innerHTML = "";
     for (let i = 0; i < game.hands[s].length; i++) {
       const b = document.createElement("div"); b.className = "mini-card"; el.appendChild(b);
     }
-  }
-  for (const s of [0, 1, 2, 3]) {
-    const seat = $("seat-" + s);
-    if (seat) seat.classList.toggle("active-turn", game.phase === "playing" && game.turn === s);
+    $("seat-" + r).classList.toggle("active-turn", game.phase === "playing" && game.turn === s);
   }
 }
 
@@ -203,23 +245,22 @@ function renderTrick() {
   area.innerHTML = "";
   for (const p of game.currentTrick) {
     const el = document.createElement("div");
-    el.className = `trick-card tc-${p.seat}`;
+    el.className = `trick-card tc-${rel(p.seat)}`;
     el.innerHTML = `<img class="card-face" src="${cardSrc(p.card)}" alt="" draggable="false">`;
     area.appendChild(el);
   }
 }
 
 function renderTurn() {
-  const names = { 0: "دورك", 1: "دور اليمين", 2: "دور شريكك", 3: "دور اليسار" };
   $("turn-indicator").textContent =
-    game.phase === "playing" ? (names[game.turn] || "") :
+    game.phase === "playing" ? (game.turn === ME ? "دورك" : "دور " + seatName(game.turn)) :
     BID_PHASES.includes(game.phase) ? (game.phase === "doubling" ? "الدبل" : "المزايدة") : "";
 }
 
 // ---------- Bidding UI ----------
 const SEAT_NAME = { 0: "أنت", 1: "يمين", 2: "شريكك", 3: "يسار" };
-// Online: the real player names (seat 0 is always "you").
-const seatName = (s) => (s !== HUMAN && game && game.online ? game.seatName(s) : SEAT_NAME[s]);
+// Online: the real player names; offline: the position relative to you.
+const seatName = (s) => (s !== ME && online ? online.seats[s]?.name || "—" : SEAT_NAME[rel(s)]);
 
 function bidLabel(a) {
   switch (a.kind) {
@@ -249,7 +290,7 @@ function bidTitle() {
 
 function renderBidPanel() {
   const panel = $("bid-panel");
-  const showForHuman = BID_PHASES.includes(game.phase) && game.bidTurn === HUMAN && !busy;
+  const showForHuman = BID_PHASES.includes(game.phase) && game.bidTurn === ME && !busy;
   if (!showForHuman) { panel.classList.add("hidden"); return; }
   panel.classList.remove("hidden");   // keep the hand visible so you can judge your cards
 
@@ -263,7 +304,7 @@ function renderBidPanel() {
   const box = $("bid-buttons");
   box.innerHTML = "";
 
-  const legal = game.legalBids(HUMAN);
+  const legal = game.legalBids(ME);
   const suitBids = game.phase === "bidding2" ? legal.filter((a) => a.kind === "hokom") : [];
   for (const a of legal) {
     if (suitBids.includes(a)) continue;
@@ -290,51 +331,66 @@ function addBidBtn(box, label, cls, fn) {
   box.appendChild(b);
 }
 function doBid(action) {
-  if (game.bidTurn !== HUMAN) return;
-  game.bid(HUMAN, action);
+  if (game.bidTurn !== ME) return;
+  if (online && !online.isHost) { sendMove({ kind: "bid", action }); return; }
+  game.bid(ME, action);
   render();
   maybeBotTurn();
 }
 
 // ---------- Human play ----------
 function onHumanPlay(cardId) {
-  if (busy || game.turn !== HUMAN) return;
-  game.play(HUMAN, cardId);
+  if (busy || game.turn !== ME) return;
+  if (online && !online.isHost) { sendMove({ kind: "play", cardId }); return; }
+  game.play(ME, cardId);
   render();
   afterPlayFlow();
 }
 
+// Non-host: send the move to the host and wait for the next snapshot.
+function sendMove(move) {
+  busy = true; render();
+  rooms.sendAction(online.code, ME, move).catch(() => { busy = false; render(); toast("تعذّر الإرسال، حاول مرة ثانية"); });
+}
+
 // ---------- Bot driver ----------
+// Only the browser that owns the game (offline, or the session host) drives the bots.
+let botTimer = null;          // one pending bot move at a time
+function botLater(ms, fn) {
+  if (botTimer) return;
+  const g = game;
+  busy = true; render();
+  botTimer = setTimeout(() => {
+    botTimer = null;
+    if (game !== g) return;   // left the game meanwhile
+    fn();
+    busy = false; render();
+  }, ms);
+}
+
 function maybeBotTurn() {
+  if (!game || (online && !online.isHost)) return;
   // Bidding bots
-  if (BID_PHASES.includes(game.phase) && game.bidTurn !== HUMAN) {
-    busy = true; render();
-    setTimeout(() => {
-      const action = chooseBid(game, game.bidTurn);
-      game.bid(game.bidTurn, action);
-      busy = false; render();
-      maybeBotTurn();
-    }, 650);
+  if (BID_PHASES.includes(game.phase) && isBot(game.bidTurn)) {
+    botLater(650, () => {
+      game.bid(game.bidTurn, chooseBid(game, game.bidTurn));
+      setTimeout(maybeBotTurn);
+    });
     return;
   }
   // Playing bots
-  if (game.phase === "playing" && game.turn !== HUMAN) {
+  if (game.phase === "playing" && isBot(game.turn)) {
     afterPlayFlow();
   }
 }
 
 function afterPlayFlow() {
-  if (game.phase !== "playing") return;
-  if (game.turn === HUMAN) { render(); return; }
-  busy = true; render();
-  setTimeout(() => {
-    const card = chooseCard(game, game.turn);
-    game.play(game.turn, card.id);
-    render();
-    busy = false;
-    // small pause if a trick just completed (area cleared)
-    afterPlayFlow();
-  }, 700);
+  if (!game || game.phase !== "playing") return;
+  if (!isBot(game.turn)) { render(); return; }
+  botLater(700, () => {
+    game.play(game.turn, chooseCard(game, game.turn).id);
+    setTimeout(afterPlayFlow);
+  });
 }
 
 // ---------- Results ----------
@@ -343,23 +399,25 @@ const RESULT_TITLE = { normal: "نهاية الجولة", khasara: "قهر! ال
 function showRoundResult(ev) {
   const panel = $("result-panel");
   let title = RESULT_TITLE[ev.result];
-  if (ev.result === "kaboot") title = ev.winner === "A" ? "كبوت لنا! 🔥" : "كبوت علينا!";
+  if (ev.result === "kaboot") title = ev.winner === US() ? "كبوت لنا! 🔥" : "كبوت علينا!";
   $("result-title").textContent = title;
-  const line = (label, a, b) => (a || b) ? `${label} — لنا ${a} · لهم ${b}<br>` : "";
+  const u = US(), t = THEM();
+  const line = (label, v) => (v[u] || v[t]) ? `${label} — لنا ${v[u]} · لهم ${v[t]}<br>` : "";
   $("result-body").innerHTML =
     `العقد: <b>${contractText(game.mode, game.trump)}${multText(game)}</b><br>` +
-    line("الأبناط", ev.raw.A, ev.raw.B) +
-    line("المشاريع", ev.proj.A, ev.proj.B) +
-    line("البلوت", ev.bal.A, ev.bal.B) +
-    `<span class="big">لنا +${ev.gp.A} · لهم +${ev.gp.B}</span><br>` +
-    `المجموع: لنا ${game.score.A} · لهم ${game.score.B}`;
-  $("btn-next").textContent = "الجولة التالية";
+    line("الأبناط", ev.raw) +
+    line("المشاريع", ev.proj) +
+    line("البلوت", ev.bal) +
+    `<span class="big">لنا +${ev.gp[u]} · لهم +${ev.gp[t]}</span><br>` +
+    `المجموع: لنا ${game.score[u]} · لهم ${game.score[t]}`;
+  // Online only the host deals the next round.
+  $("btn-next").textContent = online && !online.isHost ? "تمام" : "الجولة التالية";
   panel.classList.remove("hidden");
 }
 
 async function showMatchResult(ev) {
   const panel = $("result-panel");
-  const weWon = ev.winner === "A";
+  const weWon = ev.winner === US();
   let coinLine = "";
   if (matchStake > 0) {
     if (weWon) {
@@ -375,9 +433,9 @@ async function showMatchResult(ev) {
   matchStake = 0;
   $("result-title").textContent = weWon ? "فزنا! 🏆" : "خسرنا";
   $("result-body").innerHTML =
-    `<span class="big">${ev.score.A} — ${ev.score.B}</span><br>` +
+    `<span class="big">${ev.score[US()]} — ${ev.score[THEM()]}</span><br>` +
     (weWon ? "مبروك الفوز!" : "حظ أوفر المرة الجاية") + coinLine;
-  $("btn-next").textContent = "رجوع للرئيسية";
+  $("btn-next").textContent = online ? "رجوع للجلسة" : "رجوع للرئيسية";
   panel.classList.remove("hidden");
 }
 
@@ -391,7 +449,7 @@ function multText(g) {
 function playStartText(ev) {
   const parts = [];
   if (ev.projects.length) {
-    const who = TEAM_OF(ev.projects[0].seat) === "A" ? "لنا" : "لهم";
+    const who = TEAM_OF(ev.projects[0].seat) === US() ? "لنا" : "لهم";
     parts.push(`مشاريع ${who}: ` + ev.projects.map((p) => `${PROJECT_AR[p.type]} (${seatName(p.seat)})`).join("، "));
   }
   if (ev.balootSeat !== null) parts.push(`بلوت مع ${seatName(ev.balootSeat)}`);
@@ -407,4 +465,360 @@ let toastTimer;
 function toast(msg, ms = 1900) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+// =====================================================================
+// ---------- Private sessions (جلسات خاصة) ----------
+// Friendly tables with friends: create → share code/link → waiting hall → host seats players
+// (optional PIN, lock, kick, pick seats/teams) → empty seats become bots → play. No coins.
+// The host's browser runs the real game; see rooms.js for the data flow.
+// =====================================================================
+const PUB_EVENTS = new Set(["bid", "contract", "play-start", "round-end", "match-end", "redeal"]);
+
+$("btn-private").onclick = () => {
+  if (!state.user) {
+    alert(state.configured ? "الجلسات الخاصة تحتاج حساب — سجّل دخول أول" : "الجلسات الخاصة تحتاج ربط Firebase");
+    if (state.configured) show("screen-auth");
+    return;
+  }
+  openRoomMenu("");
+};
+$("btn-room-back").onclick = () => show("screen-home");
+$("join-code").oninput = (e) => { e.target.value = rooms.normalizeCode(e.target.value); };
+$("btn-create-room").onclick = async () => {
+  const pin = $("create-pin").value.trim();
+  if (pin && !/^\d{4}$/.test(pin)) { roomError("الرمز السري ٤ أرقام"); return; }
+  roomError("");
+  try { await enterRoom(await rooms.createRoom({ pin }), true); }
+  catch (e) { console.error(e); roomError("تعذّر إنشاء الجلسة، حاول مرة ثانية"); }
+};
+$("btn-join-room").onclick = () => joinByCode($("join-code").value, $("join-pin").value.trim());
+
+$("btn-copy-link").onclick = async () => {
+  const link = rooms.inviteLink(online.code);
+  try { await navigator.clipboard.writeText(link); toastLobby("انتسخ الرابط ✔"); }
+  catch (_) { prompt("انسخ الرابط:", link); }
+};
+$("btn-share-wa").onclick = () => {
+  const text = `تعال نلعب بلوت 🃏 رمز الجلسة: ${online.code}\n${rooms.inviteLink(online.code)}`;
+  window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank");
+};
+$("lobby-lock").onchange = (e) => rooms.updateRoom(online.code, { locked: e.target.checked });
+$("btn-start-room").onclick = () => hostStartGame();
+$("btn-leave-room").onclick = () => {
+  if (online?.isHost && !confirm("خروجك ينهي الجلسة للكل. متأكد؟")) return;
+  exitRoom();
+};
+
+function roomError(msg) { $("room-error").textContent = msg; }
+function toastLobby(msg) { $("lobby-status").textContent = msg; setTimeout(renderLobby, 1500); }
+
+function openRoomMenu(code) {
+  roomError("");
+  $("join-code").value = code;
+  $("join-pin").value = "";
+  $("join-pin").style.display = "none";
+  show("screen-room-menu");
+}
+
+// Invite links look like ...?room=ABC123 — open the join flow after sign-in.
+function openInviteLink() {
+  const code = rooms.normalizeCode(new URLSearchParams(location.search).get("room"));
+  if (code) { openRoomMenu(code); joinByCode(code, ""); }
+}
+
+async function joinByCode(raw, pin) {
+  const code = rooms.normalizeCode(raw);
+  roomError("");
+  if (code.length !== 6) { roomError("الرمز ٦ خانات"); return; }
+  try {
+    const room = await rooms.getRoom(code);
+    if (!room || room.status === "closed") { roomError("ما لقينا جلسة بهذا الرمز، أو انتهت"); return; }
+    if (room.hostUid === state.user.uid) { await enterRoom(code, true); return; }
+    const seated = room.seats.some((s) => s && s.uid === state.user.uid);
+    if (!seated && room.locked) { roomError("الجلسة مقفلة 🔒"); return; }
+    if (!seated && room.hasPin && !pin) {
+      $("join-pin").style.display = "block";
+      $("join-pin").focus();
+      roomError("الجلسة محمية برمز سري — اكتبه واضغط انضم");
+      return;
+    }
+    await rooms.joinRoom(code, pin);
+    await enterRoom(code, false);
+  } catch (e) {
+    roomError(e.message === "kicked" ? "المضيف طلّعك من هذي الجلسة" : "تعذّر الانضمام، حاول مرة ثانية");
+  }
+}
+
+async function enterRoom(code, isHost) {
+  online = {
+    code, isHost, room: null, seats: [null, null, null, null], members: [], unsubs: [],
+    pin: "", pub: null, hand: null, lastSeq: null, seq: 0, events: [], seen: false,
+  };
+  ME = -1;
+  game = null;
+  history.replaceState(null, "", "?room=" + code);
+  $("lobby-code").textContent = code;
+  show("screen-lobby");
+
+  if (isHost) {
+    const cfg = await rooms.readConfig(code);
+    online.pin = cfg.pin || "";
+    const room = await rooms.getRoom(code);
+    online.room = room;
+    if (room.status === "playing" && cfg.engine) hostResume(room, cfg.engine);   // host refreshed mid-game
+    online.unsubs.push(rooms.watchMembers(code, hostSyncMembers));
+    online.unsubs.push(rooms.watchActions(code, hostOnAction));
+  } else {
+    online.unsubs.push(rooms.watchMyMember(code, onMyMember));
+    online.unsubs.push(rooms.watchMyHand(code, (hand) => {
+      if (!online) return;
+      online.hand = hand;
+      if (online.pub && ME >= 0) { game = rooms.viewGame(online.pub, ME, myCards()); render(); }
+    }));
+  }
+  online.unsubs.push(rooms.watchRoom(code, onRoom));
+}
+
+// My cards from the private hand doc, only if it's for the seat I'm in now.
+const myCards = () => (online.hand && online.hand.seat === ME ? online.hand.cards : []);
+
+function exitRoom(msg) {
+  if (!online) return;
+  const { code, isHost, unsubs } = online;
+  unsubs.forEach((u) => u());
+  if (isHost) rooms.updateRoom(code, { status: "closed" }).catch(() => {});
+  else rooms.leaveRoom(code);
+  online = null; game = null; ME = 0; busy = false;
+  clearTimeout(botTimer); botTimer = null;
+  $("result-panel").classList.add("hidden");
+  history.replaceState(null, "", location.pathname);
+  show("screen-home");
+  if (msg) alert(msg);
+}
+
+function onMyMember(m) {
+  if (!online) return;
+  if (m) online.seen = true;
+  if (m?.kicked) { exitRoom("المضيف طلّعك من الجلسة"); return; }
+  if (m?.pinWrong) {
+    const code = online.code;
+    exitRoom();
+    openRoomMenu(code);
+    $("join-pin").style.display = "block";
+    roomError("الرمز السري غلط");
+    return;
+  }
+  if (!m && online.seen) exitRoom("طلعت من الجلسة");
+}
+
+function onRoom(room) {
+  if (!online) return;
+  if (!room || room.status === "closed") { if (!online.isHost) exitRoom("المضيف أنهى الجلسة"); return; }
+  const prevMe = ME;
+  online.room = room;
+  online.seats = room.seats;
+  ME = room.seats.findIndex((s) => s && s.uid === state.user.uid);
+
+  if (room.status === "lobby") {
+    online.pub = null;
+    // Stay on the game screen while the final result is still showing.
+    if (!$("screen-game").classList.contains("active") || $("result-panel").classList.contains("hidden")) show("screen-lobby");
+    renderLobby();
+    return;
+  }
+  // playing
+  if (online.isHost) return;                  // the host renders its own engine
+  if (ME < 0 || !room.state) { show("screen-lobby"); renderLobby(); return; }
+  const pub = JSON.parse(room.state);
+  const first = online.lastSeq === null || prevMe !== ME;
+  if (online.pub && pub.round !== online.pub.round) $("result-panel").classList.add("hidden");
+  online.pub = pub;
+  busy = false;
+  game = rooms.viewGame(pub, ME, myCards());
+  if (!$("screen-game").classList.contains("active")) enterGameScreen();
+  // Replay the host's events we haven't seen (toasts, round results). Skip history on first sight.
+  for (const e of pub.events || []) if (!first && e.seq > online.lastSeq) onEvent(e.ev);
+  online.lastSeq = Math.max(online.lastSeq ?? 0, ...(pub.events || []).map((e) => e.seq));
+  render();
+}
+
+function renderLobby() {
+  if (!online || !online.room) return;
+  const { room, isHost } = online;
+  const waiting = online.members.filter((m) => !m.kicked && !room.seats.some((s) => s && s.uid === m.uid));
+  for (let i = 0; i < 4; i++) {
+    const box = $("lobby-seat-" + i);
+    const s = room.seats[i];
+    box.innerHTML = "";
+    const el = document.createElement("div");
+    if (s) {
+      el.className = "lobby-seat" + (s.uid && s.uid === state.user.uid ? " me" : "");
+      el.textContent = (s.bot ? "🤖 " : "") + s.name + (s.uid === room.hostUid ? " 👑" : "");
+      if (isHost && s.uid !== state.user.uid && room.status === "lobby") {
+        const k = document.createElement("button");
+        k.className = "kick"; k.textContent = "✕"; k.title = "طرد";
+        k.onclick = () => { if (s.bot || confirm(`تطرد ${s.name}؟`)) hostRemoveSeat(i, false); };
+        el.appendChild(k);
+      }
+    } else {
+      el.className = "lobby-seat empty";
+      el.textContent = "فاضي";
+      if (room.status === "lobby" && (isHost || ME >= 0)) {
+        el.classList.add("clickable");
+        el.textContent += " · اجلس هنا";
+        el.onclick = () => (isHost ? hostMoveSeat(room.hostUid, i) : rooms.requestSeat(online.code, i));
+      }
+    }
+    box.appendChild(el);
+  }
+  $("lock-row").style.display = isHost ? "flex" : "none";
+  $("lobby-lock").checked = !!room.locked;
+  const empty = room.seats.filter((s) => !s).length;
+  $("btn-start-room").style.display = isHost && room.status === "lobby" ? "block" : "none";
+  $("btn-start-room").textContent = empty ? `ابدأ اللعب (الكمبيوتر يكمّل ${empty})` : "ابدأ اللعب";
+
+  let status;
+  if (room.status === "playing") status = ME < 0 ? "الجلسة بدأت — انتظر الصكة الجاية" : "اللعب شغّال…";
+  else if (ME < 0) status = room.seats.every(Boolean) ? "الطاولة مكتملة — انتظر المضيف" : "بانتظار المضيف يجلسك…";
+  else status = isHost ? "أرسل الرمز لربعك، واضغط ابدأ لما تجهزون" : "بانتظار المضيف يبدأ…";
+  if (isHost && waiting.length) status += ` · بالانتظار: ${waiting.map((m) => m.name).join("، ")}`;
+  if (room.hasPin) status += " · 🔑 محمية برمز";
+  $("lobby-status").textContent = status;
+}
+
+// ---------- Host side ----------
+function hostSaveSeats(seats) {
+  online.seats = seats;
+  return rooms.updateRoom(online.code, { seats });
+}
+
+// The waiting hall changed: seat newcomers, honour seat-change requests, free seats of leavers.
+async function hostSyncMembers(list) {
+  if (!online) return;
+  online.members = list;
+  const room = online.room;
+  const seats = online.seats.slice();
+  const lobby = room.status === "lobby";
+  let changed = false;
+
+  for (const m of list) {
+    if (m.kicked) continue;
+    const at = seats.findIndex((s) => s && s.uid === m.uid);
+    if (at < 0) {
+      if (!lobby || room.locked) continue;
+      if (online.pin && m.pin !== online.pin) {
+        if (!m.pinWrong) rooms.setMember(online.code, m.uid, { pinWrong: true });
+        continue;
+      }
+      const want = Number.isInteger(m.wantSeat) && !seats[m.wantSeat] ? m.wantSeat : seats.findIndex((s) => !s);
+      if (want < 0) continue;
+      seats[want] = { uid: m.uid, name: m.name };
+      changed = true;
+    } else if (lobby && Number.isInteger(m.wantSeat) && m.wantSeat !== at) {
+      if (!seats[m.wantSeat]) { seats[m.wantSeat] = seats[at]; seats[at] = null; changed = true; }
+      rooms.setMember(online.code, m.uid, { wantSeat: null });
+    }
+  }
+  // Players who left (member entry deleted): free the seat, or hand it to the computer mid-game.
+  const present = new Set(list.filter((m) => !m.kicked).map((m) => m.uid));
+  seats.forEach((s, i) => {
+    if (!s || s.bot || s.uid === room.hostUid || present.has(s.uid)) return;
+    seats[i] = lobby ? null : { bot: true, name: s.name + " 🤖" };
+    changed = true;
+  });
+  if (changed) {
+    await hostSaveSeats(seats);
+    if (!lobby && game) { enterGameScreen(); maybeBotTurn(); }
+  }
+  renderLobby();
+}
+
+function hostMoveSeat(uid, to) {
+  const seats = online.seats.slice();
+  const from = seats.findIndex((s) => s && s.uid === uid);
+  if (seats[to] || from < 0) return;
+  seats[to] = seats[from]; seats[from] = null;
+  hostSaveSeats(seats);
+}
+
+// Kick (lobby: frees the seat) or, mid-game, hand the seat to the computer.
+async function hostRemoveSeat(i, toBot) {
+  const s = online.seats[i];
+  if (!s) return;
+  const seats = online.seats.slice();
+  seats[i] = toBot ? { bot: true, name: s.name + " 🤖" } : null;
+  if (s.uid) await rooms.setMember(online.code, s.uid, { kicked: true }).catch(() => {});
+  await hostSaveSeats(seats);
+  if (toBot && game) { enterGameScreen(); maybeBotTurn(); }
+}
+
+function attachHostGame() {
+  game.on(onEvent);
+  game.on((ev) => {
+    if (PUB_EVENTS.has(ev.type)) online.events = [...online.events, { seq: ++online.seq, ev }].slice(-12);
+    schedulePublish();
+  });
+}
+
+let publishTimer = null;
+function schedulePublish() {
+  if (publishTimer || !online?.isHost) return;
+  publishTimer = setTimeout(() => {
+    publishTimer = null;
+    if (!online || !game) return;
+    rooms.publish(online.code, game, online.seats, online.events).catch((e) => console.error("publish", e));
+  });
+}
+
+async function hostStartGame() {
+  let b = 0;
+  const seats = online.seats.map((s) => s || { bot: true, name: rooms.BOT_NAMES[b++] });
+  await rooms.updateRoom(online.code, { seats, status: "playing" });
+  online.seats = seats;
+  online.room = { ...online.room, seats, status: "playing" };
+  ME = seats.findIndex((s) => s && s.uid === state.user.uid);
+  game = new BalootGame({ targetScore: 152 });
+  attachHostGame();
+  schedulePublish();
+  enterGameScreen();
+  maybeBotTurn();
+}
+
+function hostResume(room, engineJson) {
+  online.seats = room.seats;
+  ME = room.seats.findIndex((s) => s && s.uid === state.user.uid);
+  try {
+    const pub = room.state ? JSON.parse(room.state) : null;
+    online.events = pub?.events || [];
+    online.seq = Math.max(0, ...online.events.map((e) => e.seq));
+  } catch (_) { /* fresh event log */ }
+  game = rooms.engineFromJSON(engineJson);
+  attachHostGame();
+  enterGameScreen();
+  if (game.phase === "roundEnd" && game.lastRoundResult) showRoundResult(game.lastRoundResult);
+  if (game.phase === "matchEnd") showMatchResult({ winner: game.score.A > game.score.B ? "A" : "B", score: { ...game.score } });
+  maybeBotTurn();
+}
+
+async function hostBackToLobby() {
+  game = null;
+  online.events = [];
+  await rooms.updateRoom(online.code, { status: "lobby", state: null });
+  rooms.setConfig(online.code, { engine: null }).catch(() => {});
+  show("screen-lobby");
+  renderLobby();
+}
+
+// A move from another player: the engine validates it, then the host publishes the new state.
+function hostOnAction(a) {
+  rooms.deleteAction(online.code, a.id);
+  if (!game || online.room?.status !== "playing") return;
+  const s = online.seats[a.seat];
+  if (!s || s.bot || s.uid !== a.uid) return;
+  const ok = a.kind === "bid" ? game.bid(a.seat, a.action)
+           : a.kind === "play" ? game.play(a.seat, a.cardId) : false;
+  if (!ok) { schedulePublish(); return; }      // resend state so the sender is unblocked
+  render();
+  maybeBotTurn();
 }

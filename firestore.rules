@@ -33,6 +33,59 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Private sessions (web/js/rooms.js). The code in the URL is the "key": rooms can be
+    // fetched by code but never listed. Only the host writes the room; others join through
+    // members/{uid} and send moves through actions/.
+    function roomHost(code) {
+      return get(/databases/$(database)/documents/rooms/$(code)).data.hostUid;
+    }
+    function isRoomHost(code) {
+      return request.auth != null && roomHost(code) == request.auth.uid;
+    }
+
+    match /rooms/{code} {
+      allow get: if request.auth != null;
+      allow list: if false;
+      allow create: if request.auth != null
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.code == code;
+      allow update, delete: if request.auth != null && resource.data.hostUid == request.auth.uid;
+
+      // Waiting hall. Members read/write only their own entry; a kicked member stays kicked.
+      match /members/{uid} {
+        allow read: if request.auth != null && (request.auth.uid == uid || isRoomHost(code));
+        allow create: if request.auth != null && request.auth.uid == uid
+          && request.resource.data.kicked == false;
+        allow update: if isRoomHost(code)
+          || (request.auth != null && request.auth.uid == uid
+              && resource.data.kicked == false && request.resource.data.kicked == false);
+        allow delete: if request.auth != null && (request.auth.uid == uid || isRoomHost(code));
+      }
+
+      // Each player's cards, keyed by uid: nobody else (except the host's engine) can read them.
+      match /hands/{uid} {
+        allow read: if request.auth != null && (request.auth.uid == uid || isRoomHost(code));
+        allow write: if isRoomHost(code);
+      }
+
+      // Moves sent to the host. You may only act for the seat you're sitting in.
+      match /actions/{id} {
+        allow create: if request.auth != null
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.seat is int
+          && get(/databases/$(database)/documents/rooms/$(code)).data.seats[request.resource.data.seat].uid == request.auth.uid;
+        allow read, delete: if isRoomHost(code);
+        allow update: if false;
+      }
+
+      // PIN + full engine state (for the host to resume after a refresh). Host only.
+      match /private/{doc} {
+        allow read, update: if isRoomHost(code);
+        allow create: if request.auth != null
+          && getAfter(/databases/$(database)/documents/rooms/$(code)).data.hostUid == request.auth.uid;
+      }
+    }
+
     // Match history: a player may add their own records; only admin reads them.
     match /matches/{id} {
       allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
