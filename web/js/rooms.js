@@ -4,16 +4,16 @@
 // empty seats are filled by the computer when the game starts.
 //
 // Firestore layout (see firestore.rules):
-//   rooms/{code}                 { code, hostUid, hostName, status, locked, hasPin, seats[4], state, createdAt }
-//   rooms/{code}/members/{uid}   { name, pin, wantSeat, kicked, ts }     — the waiting hall
+//   rooms/{code}                 { code, hostUid, hostName, status, locked, hasPin, seats[4], state, watchers, hostSeen, createdAt }
+//   rooms/{code}/members/{uid}   { name, pin, wantSeat, spectator, kicked, ts } — the waiting hall + spectators
 //   rooms/{code}/hands/{uid}     { seat, cards: [cardId] }               — readable by that player only
 //   rooms/{code}/actions/{id}    { uid, seat, kind, action, cardId }     — moves sent to the host
 //   rooms/{code}/private/config  { pin, engine }                         — host only
 //
 // The host's browser runs the authoritative BalootGame (including the bots) and publishes a
 // public snapshot; every other player renders that snapshot and sends moves as actions.
-import { fire, state as authState } from "./auth.js?v=12";
-import { BalootGame, detectProjects } from "./engine.js?v=12";
+import { fire, state as authState } from "./auth.js?v=13";
+import { BalootGame, detectProjects } from "./engine.js?v=13";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid typos
 export const BOT_NAMES = ["كمبيوتر ١", "كمبيوتر ٢", "كمبيوتر ٣"];
@@ -35,6 +35,26 @@ export function inviteLink(code) {
 }
 
 // ---------- Lobby ----------
+// Sessions whose host pinged recently (see startHostPing in ui.js) — the "open sessions" list.
+// Re-queried every 30s so the cut-off moves; closed and locked tables are left to the caller.
+const ROOM_ALIVE_MS = 90000;
+export function watchOpenRooms(cb) {
+  const { db, fns } = fire();
+  let unsub = () => {};
+  const subscribe = () => {
+    unsub();
+    const q = fns.query(fns.collection(db, "rooms"), fns.where("hostSeen", ">", Date.now() - ROOM_ALIVE_MS), fns.limit(40));
+    unsub = fns.onSnapshot(q, (snap) => {
+      const out = [];
+      snap.forEach((d) => out.push(d.data()));
+      cb(out);
+    }, (e) => { console.error("rooms list", e); cb(null); });
+  };
+  subscribe();
+  const t = setInterval(subscribe, 30000);
+  return () => { clearInterval(t); unsub(); };
+}
+
 // options: { strict: force following suit/trumping, stake: coins each player puts in (0 = friendly) }
 export async function createRoom({ pin = "", strict = true, stake = 0 } = {}) {
   const { db, fns } = fire();
@@ -46,7 +66,7 @@ export async function createRoom({ pin = "", strict = true, stake = 0 } = {}) {
     batch.set(roomRef(code), {
       code, hostUid: me.uid, hostName: me.name, status: "lobby", locked: false, hasPin: !!pin,
       seats: [{ uid: me.uid, name: me.name }, null, null, null],
-      options: { strict, stake }, matchId: null,
+      options: { strict, stake }, matchId: null, watchers: 0, hostSeen: Date.now(),
       state: null, createdAt: fns.serverTimestamp(),
     });
     batch.set(sub(code, "private", "config"), { pin, engine: null });
@@ -62,17 +82,19 @@ export async function getRoom(code) {
   return snap.exists() ? snap.data() : null;
 }
 
-// Enter the waiting hall. The host's browser validates the PIN and seats you.
-export async function joinRoom(code, pin = "") {
+// Enter the waiting hall. The host's browser validates the PIN and seats you — in wantSeat if
+// it's empty or a computer's, else any empty seat. A spectator is never seated, only counted.
+export async function joinRoom(code, pin = "", { wantSeat = null, spectator = false } = {}) {
   const { fns } = fire();
   const me = authState.profile;
   const ref = sub(code, "members", me.uid);
   const snap = await fns.getDoc(ref);
+  const fields = { name: me.name, pin, pinWrong: false, wantSeat, spectator, ts: fns.serverTimestamp() };
   if (snap.exists()) {
     if (snap.data().kicked) throw new Error("kicked");
-    await fns.updateDoc(ref, { name: me.name, pin, pinWrong: false, ts: fns.serverTimestamp() });
+    await fns.updateDoc(ref, fields);
   } else {
-    await fns.setDoc(ref, { name: me.name, pin, wantSeat: null, kicked: false, ts: fns.serverTimestamp() });
+    await fns.setDoc(ref, { ...fields, kicked: false });
   }
 }
 
@@ -83,7 +105,7 @@ export async function leaveRoom(code) {
 
 export function requestSeat(code, seat) {
   const { fns } = fire();
-  return fns.updateDoc(sub(code, "members", authState.profile.uid), { wantSeat: seat });
+  return fns.updateDoc(sub(code, "members", authState.profile.uid), { wantSeat: seat, spectator: false });
 }
 
 export function watchRoom(code, cb) {

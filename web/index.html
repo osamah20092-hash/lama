@@ -6,7 +6,7 @@
   <title>بلوت — Lamma</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/style.css?v=12" />
+  <link rel="stylesheet" href="css/style.css?v=13" />
 </head>
 <body>
   <!-- Splash while auth loads -->
@@ -68,8 +68,13 @@
   <!-- Private session: create / join -->
   <section id="screen-room-menu" class="screen">
     <div class="home-card">
-      <h2 class="section-title">جلسة خاصة</h2>
-      <p class="hint">تنشئ الجلسة وترسل الرمز أو الرابط لربعك، وأي مقعد يبقى فاضي يكمّله الكمبيوتر.</p>
+      <h2 class="section-title">الجلسات الخاصة</h2>
+      <div class="rooms-head">الجلسات المفتوحة</div>
+      <div class="room-list" id="room-list"><p class="hint">جارٍ التحميل…</p></div>
+      <div class="auth-error" id="room-error"></div>
+      <button class="btn btn-primary" id="btn-new-room">➕ أنشئ جلسة جديدة</button>
+      <div id="create-form" class="create-form hidden">
+      <p class="hint">ترسل الرمز أو الرابط لربعك، وأي مقعد يبقى فاضي يكمّله الكمبيوتر.</p>
       <input class="field code-field" id="create-pin" type="text" inputmode="numeric" maxlength="4" placeholder="رمز سري (اختياري، ٤ أرقام)" />
       <div class="stake-row">
         <div class="stake-label">الجلسة:</div>
@@ -77,13 +82,14 @@
       </div>
       <label class="lock-row"><input type="checkbox" id="opt-strict" checked /> إلزام اتباع النوع والقطع</label>
       <p class="hint" id="opt-strict-hint" style="display:none">اللعب حر: تقدر تنزل أي ورقة، واللي يغلط يكشفه الخصم بـ «قيد ⚖️» وياخذ الجولة. القيد الغلط تنقلب على صاحبه.</p>
-      <button class="btn btn-primary" id="btn-create-room">➕ أنشئ جلسة</button>
+      <button class="btn btn-primary" id="btn-create-room">أنشئ الجلسة</button>
+      </div>
+      <div class="rooms-head">عندك رمز؟</div>
       <div class="join-row">
         <input class="field code-field" id="join-code" type="text" maxlength="6" placeholder="رمز الجلسة" autocomplete="off" />
         <button class="btn btn-primary" id="btn-join-room">انضم</button>
       </div>
       <input class="field code-field" id="join-pin" type="text" inputmode="numeric" maxlength="4" placeholder="الرمز السري" style="display:none" />
-      <div class="auth-error" id="room-error"></div>
       <button class="btn btn-ghost" id="btn-room-back">رجوع</button>
     </div>
   </section>
@@ -113,9 +119,9 @@
     <header class="topbar">
       <button class="icon-btn" id="btn-home">⟵</button>
       <div class="scorebox">
-        <span class="team us">لنا <b id="score-us">0</b></span>
+        <span class="team us"><span id="label-us">لنا</span> <b id="score-us">0</b></span>
         <span class="divider">·</span>
-        <span class="team them">لهم <b id="score-them">0</b></span>
+        <span class="team them"><span id="label-them">لهم</span> <b id="score-them">0</b></span>
       </div>
       <div class="contract" id="contract-badge">—</div>
       <button class="icon-btn" id="btn-sound" title="الأصوات">🔊</button>
@@ -130,7 +136,11 @@
       <div class="trick-area" id="trick-area"></div>
       <div class="proj-show hidden" id="proj-show"></div>
       <div class="turn-indicator" id="turn-indicator"></div>
+      <div class="watchers hidden" id="watchers"></div>
     </div>
+
+    <!-- Spectators: who's at the bottom + sit in a computer's seat -->
+    <div class="watch-bar hidden" id="watch-bar"></div>
 
     <div class="myhand-wrap">
       <div class="myhand" id="hand-0"></div>
@@ -191,6 +201,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/ui.js?v=12"></script>
+  <script type="module" src="js/ui.js?v=13"></script>
 </body>
 </html>

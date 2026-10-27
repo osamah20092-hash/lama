@@ -1,11 +1,11 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=12";
-import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=12";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=12";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=12";
-import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=12";
-import * as rooms from "./rooms.js?v=12";
-import * as audio from "./audio.js?v=12";
-import * as stats from "./stats.js?v=12";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=13";
+import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=13";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=13";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=13";
+import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=13";
+import * as rooms from "./rooms.js?v=13";
+import * as audio from "./audio.js?v=13";
+import * as stats from "./stats.js?v=13";
 
 const $ = (id) => document.getElementById(id);
 let ME = 0;                   // my seat; the table is drawn relative to it (me at the bottom)
@@ -15,9 +15,14 @@ let currentStake = 0;         // chosen stake for the next match
 let matchStake = 0;           // stake locked in for the running match
 let online = null;            // private session state (see "Private sessions" below), null offline
 
-const rel = (s) => (s - ME + 4) % 4;                 // 0 me · 1 right · 2 partner · 3 left
-const US = () => TEAM_OF(ME);
+// A spectator (online, not seated: ME = -1) sees the table from seat 0.
+const watching = () => !!online && ME < 0;
+const VIEW = () => (ME >= 0 ? ME : 0);
+const rel = (s) => (s - VIEW() + 4) % 4;             // 0 me · 1 right · 2 partner · 3 left
+const US = () => TEAM_OF(VIEW());
 const THEM = () => (US() === "A" ? "B" : "A");
+// "لنا/لهم" for players; spectators get neutral team names (as in the waiting hall).
+const teamLabel = (t) => (watching() ? (t === "A" ? "الفريق الأول" : "الفريق الثاني") : t === US() ? "لنا" : "لهم");
 // Seats this browser plays automatically: offline every seat but mine; online (host) the bot seats.
 const isBot = (s) => (online ? !!online.seats[s]?.bot : s !== ME);
 
@@ -212,8 +217,17 @@ async function startGame() {
 
 function enterGameScreen() {
   $("result-panel").classList.add("hidden");
+  renderSeats();
+  show("screen-game");
+  if (!history.state?.inGame) history.pushState({ inGame: true }, "");   // catch the back button
+  audio.play("shuffle");
+  render();
+}
+
+// Names/avatars around the table; online they change when someone sits, leaves or is replaced.
+function renderSeats() {
   for (const r of [1, 2, 3]) {
-    const s = (ME + r) % 4;
+    const s = (VIEW() + r) % 4;
     const seat = $("seat-" + r);
     const occ = online ? online.seats[s] : null;
     seat.querySelector(".avatar").textContent = !online || occ?.bot ? "🤖" : "👤";
@@ -223,10 +237,6 @@ function enterGameScreen() {
       if (confirm(`تحوّل ${occ.name} للكمبيوتر؟`)) hostRemoveSeat(s, true);
     } : null;
   }
-  show("screen-game");
-  if (!history.state?.inGame) history.pushState({ inGame: true }, "");   // catch the back button
-  audio.play("shuffle");
-  render();
 }
 
 // ---------- Event handling ----------
@@ -269,6 +279,8 @@ function roundEndSound(ev) {
 // ---------- Rendering ----------
 function render() {
   if (!game) return;
+  $("label-us").textContent = teamLabel(US());
+  $("label-them").textContent = teamLabel(THEM());
   $("score-us").textContent = game.score[US()];
   $("score-them").textContent = game.score[THEM()];
   $("contract-badge").textContent = game.mode
@@ -282,7 +294,32 @@ function render() {
   renderBidPanel();
   renderActions();
   renderProjectsShow();
+  renderWatchers();
   turnCue();
+}
+
+// Everyone at the table sees how many are watching; spectators get a bar to take a computer's seat.
+function renderWatchers() {
+  const n = online?.room?.watchers || 0;
+  $("watchers").classList.toggle("hidden", !n);
+  $("watchers").textContent = `👁 ${n} ${n === 1 ? "مشاهد" : "مشاهدين"}`;
+  const bar = $("watch-bar");
+  bar.classList.toggle("hidden", !watching());
+  if (!watching()) return;
+  const room = online.room;
+  const bottom = online.seats[0];
+  const bots = room.locked ? [] : online.seats.map((s, i) => (s?.bot ? i : -1)).filter((i) => i >= 0);
+  const key = JSON.stringify([bottom?.name, bots, online.seats.map((s) => s?.name)]);
+  if (bar.dataset.key === key) return;   // don't rebuild the buttons on every render
+  bar.dataset.key = key;
+  bar.innerHTML = `<span class="watch-label">👁 تشاهد · تحت: ${esc(bottom?.name || "—")}</span>`;
+  for (const i of bots) {
+    const b = document.createElement("button");
+    b.className = "btn btn-primary";
+    b.textContent = `اجلس مكان ${online.seats[i].name}`;
+    b.onclick = () => takeSeat(i);
+    bar.appendChild(b);
+  }
 }
 
 // A chime when it becomes my turn to bid or play (once per turn, not on every render).
@@ -335,6 +372,12 @@ function cardEl(card, { playable = false } = {}) {
 function renderHand() {
   const wrap = $("hand-0");
   wrap.innerHTML = "";
+  if (ME < 0) {   // spectator: the bottom player's cards stay face down
+    for (let i = 0; i < game.hands[0].length; i++) {
+      const b = document.createElement("div"); b.className = "mini-card"; wrap.appendChild(b);
+    }
+    return;
+  }
   const hand = sortHand(game.hands[ME]);
   const legalIds = new Set(
     (game.phase === "playing" && game.turn === ME && !busy && !trickHeld() ? game.legalMoves(ME) : []).map((c) => c.id)
@@ -359,7 +402,7 @@ function sortHand(hand) {
 
 function renderOpponents() {
   for (const r of [1, 2, 3]) {
-    const s = (ME + r) % 4;
+    const s = (VIEW() + r) % 4;
     const el = $("hand-" + r);
     el.innerHTML = "";
     for (let i = 0; i < game.hands[s].length; i++) {
@@ -606,9 +649,11 @@ function showRoundResult(ev) {
   if (ev.result === "kaboot") title = ev.winner === US() ? "كبوت لنا! 🔥" : "كبوت علينا!";
   if (ev.result === "qaid") title = ev.winner === US() ? "قيد صحيح ⚖️ الجولة لنا" : "انقيد علينا ⚖️";
   if (ev.result === "qaidWrong") title = ev.winner === US() ? "قيدهم غلط — الجولة لنا" : "قيدنا غلط — الجولة لهم";
+  if (watching()) title = `${RESULT_TITLE[ev.result] || "⚖️ قيد"} · الجولة: ${teamLabel(ev.winner)}`;
   $("result-title").textContent = title;
   const u = US(), t = THEM();
-  const line = (label, v) => (v[u] || v[t]) ? `${label} — لنا ${v[u]} · لهم ${v[t]}<br>` : "";
+  const lu = teamLabel(u), lt = teamLabel(t);
+  const line = (label, v) => (v[u] || v[t]) ? `${label} — ${lu} ${v[u]} · ${lt} ${v[t]}<br>` : "";
   const f = ev.qaid?.foul;
   $("result-body").innerHTML =
     (ev.qaid ? `${seatName(ev.qaid.seat)} قيّد · ` +
@@ -617,8 +662,8 @@ function showRoundResult(ev) {
     line("الأبناط", ev.raw) +
     line("المشاريع", ev.proj) +
     line("البلوت", ev.bal) +
-    `<span class="big">لنا +${ev.gp[u]} · لهم +${ev.gp[t]}</span><br>` +
-    `المجموع: لنا ${game.score[u]} · لهم ${game.score[t]}`;
+    `<span class="big">${lu} +${ev.gp[u]} · ${lt} +${ev.gp[t]}</span><br>` +
+    `المجموع: ${lu} ${game.score[u]} · ${lt} ${game.score[t]}`;
   // Online only the host deals the next round.
   $("btn-next").textContent = online && !online.isHost ? "تمام" : "الجولة التالية";
   if (online) online.resultShownAt = Date.now();
@@ -627,6 +672,13 @@ function showRoundResult(ev) {
 
 async function showMatchResult(ev) {
   const panel = $("result-panel");
+  if (watching()) {
+    $("result-title").textContent = `🏆 فاز ${teamLabel(ev.winner)}`;
+    $("result-body").innerHTML = `<span class="big">${teamLabel("A")} ${ev.score.A} — ${teamLabel("B")} ${ev.score.B}</span>`;
+    $("btn-next").textContent = "رجوع للجلسة";
+    panel.classList.remove("hidden");
+    return;
+  }
   const weWon = ev.winner === US();
   let coinLine = "";
   if (matchStake > 0) {
@@ -662,7 +714,6 @@ async function openStats() {
   try {
     const { played, won, rivals } = await stats.loadHeadToHead();
     if (!played) { box.innerHTML = `<p class="hint">ما لعبت جلسات خاصة مع ربعك للحين. العب صكة كاملة وترجع هنا تشوف مين غلبت 😉</p>`; return; }
-    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
     box.innerHTML =
       `<div class="stats-total">لعبت <b>${played}</b> صكة · فزت <b>${won}</b> · خسرت <b>${played - won}</b></div>` +
       rivals.map((r) => {
@@ -680,6 +731,8 @@ async function openStats() {
 }
 
 // ---------- Helpers ----------
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+
 function multText(g) {
   if (g.gahwa) return " · قهوة ☕";
   const m = { 2: " · دبل", 3: " · ثري", 4: " · فور" }[g.multiplier] || "";
@@ -720,7 +773,11 @@ $("btn-private").onclick = () => {
   }
   openRoomMenu("");
 };
-$("btn-room-back").onclick = () => show("screen-home");
+$("btn-room-back").onclick = () => { stopRoomList(); show("screen-home"); };
+$("btn-new-room").onclick = () => {
+  $("create-form").classList.remove("hidden");
+  $("btn-new-room").style.display = "none";
+};
 $("join-code").oninput = (e) => { e.target.value = rooms.normalizeCode(e.target.value); };
 let roomStake = 0;
 function renderRoomStakeChips() {
@@ -771,7 +828,64 @@ function openRoomMenu(code) {
   $("join-code").value = code;
   $("join-pin").value = "";
   $("join-pin").style.display = "none";
+  $("create-form").classList.add("hidden");
+  $("btn-new-room").style.display = "";
   show("screen-room-menu");
+  startRoomList();
+}
+
+// ---------- Open sessions list ----------
+// Live tables whose host is on the page and that aren't locked. Tap a free seat or a computer's
+// seat to play there, or 👁 to watch.
+let roomListUnsub = null;
+function startRoomList() {
+  stopRoomList();
+  $("room-list").innerHTML = `<p class="hint">جارٍ التحميل…</p>`;
+  roomListUnsub = rooms.watchOpenRooms(renderRoomList);
+}
+function stopRoomList() { if (roomListUnsub) roomListUnsub(); roomListUnsub = null; }
+
+function renderRoomList(list) {
+  const box = $("room-list");
+  if (!list) { box.innerHTML = `<p class="hint">تعذّر تحميل الجلسات.</p>`; return; }
+  const open = list
+    .filter((r) => r.status !== "closed" && !r.locked && r.hostUid !== state.user?.uid)
+    .sort((a, b) => (a.status === "lobby" ? 0 : 1) - (b.status === "lobby" ? 0 : 1) || (b.hostSeen || 0) - (a.hostSeen || 0));
+  if (!open.length) { box.innerHTML = `<p class="hint">ما فيه جلسات مفتوحة الحين — أنشئ وحدة وادعُ ربعك 👇</p>`; return; }
+  box.innerHTML = "";
+  for (const r of open) {
+    const row = document.createElement("div");
+    row.className = "room-row";
+    const stake = r.options?.stake || 0;
+    const tags = [
+      r.status === "playing" ? "▶ شغّالة" : "⏳ بالانتظار",
+      stake ? `رهان ${stake} 🪙` : "ودّية",
+      r.options?.strict === false ? "حر + قيد" : "",
+      r.hasPin ? "🔑" : "",
+      r.watchers ? `👁 ${r.watchers}` : "",
+    ].filter(Boolean).join(" · ");
+    row.innerHTML = `<div class="room-row-head"><span class="room-row-host">جلسة ${esc(r.hostName || "")}</span>` +
+      `<span class="room-row-tags">${tags}</span></div><div class="room-row-seats"></div>`;
+    const seatsBox = row.querySelector(".room-row-seats");
+    // Same layout as the waiting hall: team 1 (seats 0, 2) on the right, team 2 (1, 3) on the left.
+    for (const i of [0, 1, 2, 3]) {
+      const s = r.seats?.[i];
+      const b = document.createElement("button");
+      const free = !s || s.bot;
+      b.className = "seat-chip" + (free ? " open" : "");
+      b.textContent = !s ? "فاضي · اجلس" : s.bot ? `🤖 اجلس مكانه` : "👤 " + s.name;
+      b.title = s?.name || "";
+      if (free) b.onclick = () => joinByCode(r.code, "", { wantSeat: i });
+      else b.disabled = true;
+      seatsBox.appendChild(b);
+    }
+    const watch = document.createElement("button");
+    watch.className = "btn btn-ghost";
+    watch.textContent = "👁 شاهد";
+    watch.onclick = () => joinByCode(r.code, "", { spectator: true });
+    row.appendChild(watch);
+    box.appendChild(row);
+  }
 }
 
 // Invite links look like ...?room=ABC123 — open the join flow after sign-in.
@@ -780,7 +894,8 @@ function openInviteLink() {
   if (code) { openRoomMenu(code); joinByCode(code, ""); }
 }
 
-async function joinByCode(raw, pin) {
+// opts: { wantSeat: seat to sit in (empty or a computer's), spectator: just watch }
+async function joinByCode(raw, pin, opts = {}) {
   const code = rooms.normalizeCode(raw);
   roomError("");
   if (code.length !== 6) { roomError("الرمز ٦ خانات"); return; }
@@ -791,14 +906,20 @@ async function joinByCode(raw, pin) {
     const seated = room.seats.some((s) => s && s.uid === state.user.uid);
     if (!seated && room.locked) { roomError("الجلسة مقفلة 🔒"); return; }
     const stake = room.options?.stake || 0;
-    if (!seated && stake > (state.profile?.coins || 0)) { roomError(`الجلسة برهان ${stake} 🪙 ورصيدك ما يكفي`); return; }
+    if (!seated && !opts.spectator && stake > (state.profile?.coins || 0)) { roomError(`الجلسة برهان ${stake} 🪙 ورصيدك ما يكفي`); return; }
     if (!seated && room.hasPin && !pin) {
+      // From the list there's no PIN box on screen: ask right away.
+      if (opts.wantSeat !== undefined || opts.spectator) {
+        const typed = prompt("الجلسة محمية برمز سري 🔑 — اكتبه:");
+        if (typed === null) return;
+        return joinByCode(code, typed.trim(), opts);
+      }
       $("join-pin").style.display = "block";
       $("join-pin").focus();
       roomError("الجلسة محمية برمز سري — اكتبه واضغط انضم");
       return;
     }
-    await rooms.joinRoom(code, pin);
+    await rooms.joinRoom(code, pin, { wantSeat: opts.wantSeat ?? null, spectator: !!opts.spectator });
     await enterRoom(code, false);
   } catch (e) {
     roomError(e.message === "kicked" ? "المضيف طلّعك من هذي الجلسة" : "تعذّر الانضمام، حاول مرة ثانية");
@@ -812,6 +933,7 @@ async function enterRoom(code, isHost) {
   };
   ME = -1;
   game = null;
+  stopRoomList();
   history.replaceState(null, "", "?room=" + code);
   $("lobby-code").textContent = code;
   show("screen-lobby");
@@ -858,6 +980,7 @@ function exitRoom(msg) {
 function onMyMember(m) {
   if (!online) return;
   if (m) online.seen = true;
+  online.spectator = !!m?.spectator;
   if (m?.kicked) { exitRoom("المضيف طلّعك من الجلسة"); return; }
   if (m?.pinWrong) {
     const code = online.code;
@@ -887,8 +1010,9 @@ function onRoom(room) {
     return;
   }
   // playing
-  if (online.isHost) return;                  // the host renders its own engine
-  if (ME < 0 || !room.state) { show("screen-lobby"); renderLobby(); return; }
+  if (online.isHost) { if (game) renderWatchers(); return; }   // the host renders its own engine
+  if (!room.state) { show("screen-lobby"); renderLobby(); return; }
+  // Not seated (spectator, or waiting for a seat): watch the table from seat 0.
   const pub = JSON.parse(room.state);
   const first = online.lastSeq === null || prevMe !== ME;
   if (online.pub && pub.round !== online.pub.round) {
@@ -900,6 +1024,8 @@ function onRoom(room) {
   busy = false;
   game = rooms.viewGame(pub, ME, myCards(), myBaloot());
   if (!$("screen-game").classList.contains("active")) enterGameScreen();
+  else if (JSON.stringify(room.seats) !== online.seatsShown) renderSeats();
+  online.seatsShown = JSON.stringify(room.seats);
   payStakeOnce();
   // Replay the host's events we haven't seen (toasts, round results). Skip history on first sight.
   for (const e of pub.events || []) if (!first && e.seq > online.lastSeq) onEvent(e.ev);
@@ -925,13 +1051,19 @@ function renderLobby() {
         k.onclick = () => { if (s.bot || confirm(`تطرد ${s.name}؟`)) hostRemoveSeat(i, false); };
         el.appendChild(k);
       }
+      // Not seated yet: a computer's seat can be taken (mid-game too).
+      if (s.bot && !isHost && ME < 0 && !room.locked) {
+        el.classList.add("bot", "clickable");
+        el.textContent += " · اجلس مكانه";
+        el.onclick = () => takeSeat(i);
+      }
     } else {
       el.className = "lobby-seat empty";
       el.textContent = "فاضي";
-      if (room.status === "lobby" && (isHost || ME >= 0)) {
+      if (room.status === "lobby" && (isHost || ME >= 0 || !room.locked)) {
         el.classList.add("clickable");
         el.textContent += " · اجلس هنا";
-        el.onclick = () => (isHost ? hostMoveSeat(room.hostUid, i) : rooms.requestSeat(online.code, i));
+        el.onclick = () => (isHost ? hostMoveSeat(room.hostUid, i) : ME >= 0 ? rooms.requestSeat(online.code, i) : takeSeat(i));
       }
     }
     box.appendChild(el);
@@ -944,6 +1076,7 @@ function renderLobby() {
 
   let status;
   if (room.status === "playing") status = ME < 0 ? "الجلسة بدأت — انتظر الصكة الجاية" : "اللعب شغّال…";
+  else if (ME < 0 && online.spectator) status = "👁 تشاهد — اضغط مقعد فاضي لو تبي تلعب";
   else if (ME < 0) status = room.seats.every(Boolean) ? "الطاولة مكتملة — انتظر المضيف" : "بانتظار المضيف يجلسك…";
   else status = isHost ? "أرسل الرمز لربعك، واضغط ابدأ لما تجهزون" : "بانتظار المضيف يبدأ…";
   if (isHost && waiting.length) status += ` · بالانتظار: ${waiting.map((m) => m.name).join("، ")}`;
@@ -951,8 +1084,19 @@ function renderLobby() {
   const opts = room.options || {};
   status += opts.stake ? ` · رهان ${opts.stake} 🪙` : " · ودّية";
   if (opts.strict === false) status += " · لعب حر + قيد";
+  if (room.watchers) status += ` · 👁 ${room.watchers}`;
   if (hostAway()) status = "⏳ المضيف طلع من الصفحة — انتظره يرجع";
   $("lobby-status").textContent = status;
+}
+
+// Spectator / waiting player: ask the host for an empty or computer seat.
+function takeSeat(i) {
+  const stake = online.room?.options?.stake || 0;
+  if (stake > (state.profile?.coins || 0)) { alert(`الجلسة برهان ${stake} 🪙 ورصيدك ما يكفي`); return; }
+  online.spectator = false;
+  rooms.requestSeat(online.code, i)
+    .then(() => toast("بتجلس الحين…"))
+    .catch(() => toast("تعذّر، حاول مرة ثانية"));
 }
 
 // ---------- Host side ----------
@@ -961,26 +1105,31 @@ function hostSaveSeats(seats) {
   return rooms.updateRoom(online.code, { seats });
 }
 
-// The waiting hall changed: seat newcomers, honour seat-change requests, free seats of leavers.
+// The waiting hall changed: seat newcomers, honour seat-change requests, free seats of leavers,
+// and count the spectators (members with a valid PIN who aren't seated).
 async function hostSyncMembers(list) {
   if (!online) return;
   online.members = list;
   const room = online.room;
   const seats = online.seats.slice();
   const lobby = room.status === "lobby";
-  let changed = false;
+  const open = (s) => !s || s.bot;   // a computer's seat can be taken, mid-game too
+  let changed = false, watchers = 0;
 
   for (const m of list) {
     if (m.kicked) continue;
     const at = seats.findIndex((s) => s && s.uid === m.uid);
     if (at < 0) {
-      if (!lobby || room.locked) continue;
       if (online.pin && m.pin !== online.pin) {
         if (!m.pinWrong) rooms.setMember(online.code, m.uid, { pinWrong: true });
         continue;
       }
-      const want = Number.isInteger(m.wantSeat) && !seats[m.wantSeat] ? m.wantSeat : seats.findIndex((s) => !s);
-      if (want < 0) continue;
+      if (m.spectator || room.locked) { watchers++; continue; }
+      // A chosen seat if it's still open; in the lobby otherwise any empty seat, then a computer's.
+      let want = Number.isInteger(m.wantSeat) && open(seats[m.wantSeat]) ? m.wantSeat : -1;
+      if (want < 0 && lobby) want = seats.findIndex((s) => !s);
+      if (want < 0 && (lobby || Number.isInteger(m.wantSeat))) want = seats.findIndex((s) => s?.bot);
+      if (want < 0) { watchers++; continue; }
       seats[want] = { uid: m.uid, name: m.name };
       changed = true;
     } else if (lobby && Number.isInteger(m.wantSeat) && m.wantSeat !== at) {
@@ -995,9 +1144,14 @@ async function hostSyncMembers(list) {
     seats[i] = lobby ? null : { bot: true, name: s.name + " 🤖" };
     changed = true;
   });
+  if (watchers !== (room.watchers || 0)) {
+    online.room = { ...online.room, watchers };
+    rooms.updateRoom(online.code, { watchers }).catch(() => {});
+  }
   if (changed) {
     await hostSaveSeats(seats);
-    if (!lobby && game) { enterGameScreen(); maybeBotTurn(); }
+    // A player took a seat mid-game: publish so they get their hand, and stop the bot there.
+    if (!lobby && game) { renderSeats(); schedulePublish(); maybeBotTurn(); render(); }
   }
   renderLobby();
 }
