@@ -108,3 +108,40 @@ export async function adjustCoins(uid, delta) {
 export async function setCoins(uid, value) {
   await fns.updateDoc(fns.doc(db, "users", uid), { coins: Math.max(0, Math.floor(value)) });
 }
+
+// --- Betting (vs computer) ---
+// Deduct a stake at match start. Throws if the balance is too low.
+export async function placeStake(amount) {
+  if (!state.user || amount <= 0) return;
+  const ref = fns.doc(db, "users", state.user.uid);
+  await fns.runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const cur = snap.data().coins || 0;
+    if (cur < amount) throw new Error("insufficient");
+    tx.update(ref, { coins: cur - amount });
+  });
+}
+
+// Credit winnings at match end.
+export async function awardWin(amount) {
+  if (!state.user || amount <= 0) return;
+  const ref = fns.doc(db, "users", state.user.uid);
+  await fns.runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const cur = snap.data().coins || 0;
+    tx.update(ref, { coins: cur + amount });
+  });
+}
+
+// Append a match record for admin audit (append-only).
+export async function logMatch(stake, won) {
+  if (!state.user) return;
+  try {
+    await fns.addDoc(fns.collection(db, "matches"), {
+      uid: state.user.uid,
+      name: state.profile?.name || "",
+      stake, won, mode: "cpu",
+      ts: fns.serverTimestamp(),
+    });
+  } catch (_) { /* logging is best-effort */ }
+}

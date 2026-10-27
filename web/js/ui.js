@@ -1,12 +1,15 @@
 import { BalootGame, TEAM_OF } from "./engine.js";
 import { chooseBid, chooseCard } from "./ai.js";
 import { SUIT_INFO, RANK_AR, SUITS } from "./deck.js";
-import { initFirebase, onUserChange, signIn, signUp, logout, state } from "./auth.js";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js";
+import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js";
 
 const HUMAN = 0;              // the human player's seat
 const $ = (id) => document.getElementById(id);
 let game = null;
 let busy = false;             // prevents input while bots act / animations run
+let currentStake = 0;         // chosen stake for the next match
+let matchStake = 0;           // stake locked in for the running match
 
 // ---------- Screen routing ----------
 function show(screen) {
@@ -61,18 +64,36 @@ function translateAuthError(err) {
 }
 
 function renderWallet(profile) {
+  const stakeRow = $("stake-row");
   if (profile) {
     $("wallet-name").textContent = profile.name;
     $("wallet-coins").textContent = profile.coins;
     $("btn-logout").style.display = "block";
     $("link-login").style.display = "none";
     $("btn-admin").style.display = profile.isAdmin ? "block" : "none";
+    if (COINS_ON_WIN) { stakeRow.style.display = "flex"; renderStakeChips(); }
+    else stakeRow.style.display = "none";
   } else {
     $("wallet-name").textContent = "ضيف";
     $("wallet-coins").textContent = "—";
     $("btn-logout").style.display = "none";
     $("btn-admin").style.display = "none";
     $("link-login").style.display = state.configured ? "block" : "none";
+    stakeRow.style.display = "none";
+    currentStake = 0;
+  }
+}
+
+function renderStakeChips() {
+  const box = $("stake-chips");
+  box.innerHTML = "";
+  if (!BET_TIERS.includes(currentStake)) currentStake = BET_TIERS[0];
+  for (const tier of BET_TIERS) {
+    const b = document.createElement("button");
+    b.className = "stake-chip" + (tier === currentStake ? " active" : "");
+    b.textContent = tier === 0 ? "تدريب" : tier;
+    b.onclick = () => { currentStake = tier; renderStakeChips(); };
+    box.appendChild(b);
   }
 }
 
@@ -87,7 +108,13 @@ async function boot() {
 boot();
 
 // ---------- Start ----------
-function startGame() {
+async function startGame() {
+  matchStake = 0;
+  if (COINS_ON_WIN && state.profile && currentStake > 0) {
+    if ((state.profile.coins || 0) < currentStake) { alert("رصيدك لا يكفي لهذا الرهان"); return; }
+    try { await placeStake(currentStake); matchStake = currentStake; }
+    catch (e) { alert("تعذّر حجز الرهان، حاول مرة ثانية"); return; }
+  }
   game = new BalootGame({ targetScore: 152 });
   game.on(onEvent);
   show("screen-game");
@@ -295,13 +322,26 @@ function showRoundResult(ev) {
   panel.classList.remove("hidden");
 }
 
-function showMatchResult(ev) {
+async function showMatchResult(ev) {
   const panel = $("result-panel");
   const weWon = ev.winner === "A";
+  let coinLine = "";
+  if (matchStake > 0) {
+    if (weWon) {
+      const prize = matchStake * 2;
+      try { await awardWin(prize); } catch (_) {}
+      logMatch(matchStake, true);
+      coinLine = `<br><span class="big">🪙 +${prize}</span>`;
+    } else {
+      logMatch(matchStake, false);
+      coinLine = `<br>🪙 خسرت رهانك (${matchStake})`;
+    }
+  }
+  matchStake = 0;
   $("result-title").textContent = weWon ? "فزنا! 🏆" : "خسرنا";
   $("result-body").innerHTML =
     `<span class="big">${ev.score.A} — ${ev.score.B}</span><br>` +
-    (weWon ? "مبروك الفوز!" : "حظ أوفر المرة الجاية");
+    (weWon ? "مبروك الفوز!" : "حظ أوفر المرة الجاية") + coinLine;
   $("btn-next").textContent = "رجوع للرئيسية";
   panel.classList.remove("hidden");
 }

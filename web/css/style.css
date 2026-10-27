@@ -65,6 +65,13 @@ body {
 .wallet-coins { font-weight: 800; }
 .wallet-coins b { color: var(--gold); }
 
+/* ---------- Stake chips ---------- */
+.stake-row { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
+.stake-label { font-size: 13px; opacity: .8; }
+.stake-chips { display: flex; gap: 6px; flex: 1; }
+.stake-chip { flex: 1; padding: 9px 0; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; background: rgba(0,0,0,.2); color: #fff; font-family: inherit; font-weight: 700; font-size: 13px; cursor: pointer; }
+.stake-chip.active { background: var(--gold); color: #2a1e00; border-color: var(--gold); }
+
 /* ---------- Admin ---------- */
 .admin-wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
 .admin-wrap h2 { color: var(--gold); }

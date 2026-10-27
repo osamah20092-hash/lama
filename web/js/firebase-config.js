@@ -20,6 +20,15 @@ export const ADMIN_EMAILS = ["osamah20092@gmail.com"];
 // Starting coins granted once when a new account is created.
 export const STARTING_BALANCE = 1000;
 
+// --- Coins / betting (vs computer) ---
+// Turn client-side winnings on/off. For a trusted friends group this is fine;
+// it is bounded by MAX_SINGLE_WIN so no single write can mint more than that.
+export const COINS_ON_WIN = true;
+// Stake tiers the player can pick before a match (0 = practice, no coins).
+export const BET_TIERS = [0, 10, 50, 100];
+// Hard cap on how much a single wallet write may add (anti-abuse; see firestore.rules).
+export const MAX_SINGLE_WIN = 200;
+
 export function isConfigured() {
   return FIREBASE_CONFIG.apiKey && !FIREBASE_CONFIG.apiKey.startsWith("PASTE");
 }

@@ -18,15 +18,26 @@ service cloud.firestore {
         && request.resource.data.coins == 1000
         && request.resource.data.isAdmin == false;
 
-      // Admin can change anything (balances). A normal user may edit their own
-      // profile BUT cannot change coins or make themselves admin.
+      // Admin can change anything. A normal user may change ONLY their own coins
+      // (for staking/winning), and never by more than 200 in a single write
+      // (anti-abuse cap = MAX_SINGLE_WIN). Name/email/isAdmin stay frozen for self-writes.
       allow update: if isAdmin()
         || (request.auth != null
             && request.auth.uid == uid
-            && request.resource.data.coins == resource.data.coins
-            && request.resource.data.isAdmin == resource.data.isAdmin);
+            && request.resource.data.name == resource.data.name
+            && request.resource.data.email == resource.data.email
+            && request.resource.data.isAdmin == resource.data.isAdmin
+            && request.resource.data.coins >= 0
+            && (request.resource.data.coins - resource.data.coins) <= 200);
 
       allow delete: if isAdmin();
+    }
+
+    // Match history: a player may add their own records; only admin reads them.
+    match /matches/{id} {
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      allow read: if isAdmin();
+      allow update, delete: if false;
     }
   }
 }
