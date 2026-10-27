@@ -4,7 +4,7 @@
 // Teams: A = seats {0,2}, B = seats {1,3}.
 import {
   makeDeck, shuffle, SUITS, ORDER_SEQ, cardStrength, cardPoints,
-} from "./deck.js?v=7";
+} from "./deck.js?v=8";
 
 export const TEAM_OF = (seat) => (seat % 2 === 0 ? "A" : "B");
 const OTHER = (team) => (team === "A" ? "B" : "A");
@@ -63,6 +63,7 @@ export class BalootGame {
     this.projectTeam = null;      // only the team with the best project scores its projects
     this.fouls = [];              // revokes made while strict is off: [{seat, card, trick}]
     this.balootSeat = null;       // holder of trump K+Q (بلوت)
+    this.balootDeclared = false;  // بلوت only counts once its holder says it
     this.tricks = [];             // completed tricks
     this.currentTrick = [];       // {seat, card}
     this.wonCards = { A: [], B: [] };
@@ -238,11 +239,7 @@ export class BalootGame {
     this.phase = "playing";
     this.turn = (this.dealer + 1) % 4; // player right of dealer leads
     this.currentTrick = [];
-    this.emit({
-      type: "play-start",
-      multiplier: this.multiplier, gahwa: this.gahwa, locked: this.locked,
-      balootSeat: this.balootSeat,
-    });
+    this.emit({ type: "play-start", multiplier: this.multiplier, gahwa: this.gahwa, locked: this.locked });
     this.emit({ type: "state" });
   }
 
@@ -291,6 +288,19 @@ export class BalootGame {
     if (!this.canDeclare(seat)) return false;
     this.projects.push(...this.projectCandidates[seat]);
     this.emit({ type: "declare", seat, types: this.projectCandidates[seat].map((p) => p.type) });
+    this.emit({ type: "state" });
+    return true;
+  }
+
+  // بلوت: the holder of trump K+Q may say it any time during play (usually with the second card).
+  canDeclareBaloot(seat) {
+    return this.phase === "playing" && seat === this.balootSeat && !this.balootDeclared;
+  }
+
+  declareBaloot(seat) {
+    if (!this.canDeclareBaloot(seat)) return false;
+    this.balootDeclared = true;
+    this.emit({ type: "baloot", seat });
     this.emit({ type: "state" });
     return true;
   }
@@ -364,8 +374,9 @@ export class BalootGame {
     const legal = this.legalMoves(seat);
     const card = legal.find((c) => c.id === cardId);
     if (!card) return false;
-    if (!this.strict && !this.strictMoves(seat).some((c) => c.id === cardId)) {
-      this.fouls.push({ seat, card, trick: this.tricks.length });
+    if (!this.strict) {
+      const required = this.strictMoves(seat).map((c) => c.id);
+      if (!required.includes(cardId)) this.fouls.push({ seat, card, trick: this.tricks.length, required });
     }
 
     this.hands[seat] = this.hands[seat].filter((c) => c.id !== cardId);
@@ -415,7 +426,7 @@ export class BalootGame {
     const proj = { A: 0, B: 0 };
     for (const p of this.countedProjects()) proj[this.projectTeam] += PROJECT_VALUE[mode][p.type];
     const bal = { A: 0, B: 0 };      // بلوت: always 2, never multiplied, kept by its holder
-    if (this.balootSeat !== null) bal[TEAM_OF(this.balootSeat)] = 2;
+    if (this.balootDeclared) bal[TEAM_OF(this.balootSeat)] = 2;
     const projMult = m > 1 ? 2 : 1;  // projects are doubled at most
 
     const tricksWon = { A: 0, B: 0 };
@@ -468,7 +479,7 @@ export class BalootGame {
     const proj = { A: 0, B: 0 };
     for (const p of this.countedProjects()) proj[this.projectTeam] += PROJECT_VALUE[mode][p.type];
     const bal = { A: 0, B: 0 };
-    if (this.balootSeat !== null) bal[TEAM_OF(this.balootSeat)] = 2;
+    if (this.balootDeclared) bal[TEAM_OF(this.balootSeat)] = 2;
     const gp = { A: 0, B: 0 };
     gp[winner] = (mode === "sun" ? 26 : 16) * m + (proj.A + proj.B) * (m > 1 ? 2 : 1);
 

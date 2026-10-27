@@ -12,8 +12,8 @@
 //
 // The host's browser runs the authoritative BalootGame (including the bots) and publishes a
 // public snapshot; every other player renders that snapshot and sends moves as actions.
-import { fire, state as authState } from "./auth.js?v=7";
-import { BalootGame, detectProjects } from "./engine.js?v=7";
+import { fire, state as authState } from "./auth.js?v=8";
+import { BalootGame, detectProjects } from "./engine.js?v=8";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid typos
 export const BOT_NAMES = ["كمبيوتر ١", "كمبيوتر ٢", "كمبيوتر ٣"];
@@ -100,7 +100,7 @@ export function watchMyHand(code, cb) {
   const { fns } = fire();
   return fns.onSnapshot(sub(code, "hands", authState.profile.uid), (snap) => {
     const d = snap.exists() ? snap.data() : null;
-    cb(d ? { seat: d.seat, cards: d.cards.map(cardFromId) } : null);
+    cb(d ? { seat: d.seat, cards: d.cards.map(cardFromId), baloot: !!d.baloot } : null);
   });
 }
 
@@ -154,7 +154,9 @@ export async function publish(code, game, seats, events) {
   // rev always changes the doc, so players get a snapshot even after a rejected move.
   batch.update(roomRef(code), { state: JSON.stringify({ ...publicState(game), events, rev: Date.now() }) });
   seats.forEach((s, i) => {
-    if (s && !s.bot) batch.set(sub(code, "hands", s.uid), { seat: i, cards: game.hands[i].map((c) => c.id) });
+    if (s && !s.bot) batch.set(sub(code, "hands", s.uid), {
+      seat: i, cards: game.hands[i].map((c) => c.id), baloot: game.phase === "playing" && game.balootSeat === i,
+    });
   });
   batch.update(sub(code, "private", "config"), { engine: engineToJSON(game) });
   await batch.commit();
@@ -192,7 +194,9 @@ export function publicState(g) {
     "hokomBidder", "pendingTrump", "hokomRound", "multiplier", "gahwa", "locked", "doubler",
     "bidQueue", "bidTurn", "turn", "currentTrick", "flip", "lastRoundResult"]) pub[k] = g[k] ?? null;
   pub.handCounts = g.hands.map((h) => h.length);
-  pub.balootSeat = ["playing", "roundEnd", "matchEnd"].includes(g.phase) ? g.balootSeat : null;
+  // The بلوت holder stays secret until they say it.
+  pub.balootDeclared = !!g.balootDeclared;
+  pub.balootSeat = g.balootDeclared ? g.balootSeat : null;
   pub.trickNo = g.tricks.length;
   // Declared projects are announced by type only; the cards stay hidden.
   pub.declared = g.projects.map((p) => ({ seat: p.seat, type: p.type }));
@@ -204,7 +208,7 @@ export function publicState(g) {
 
 // A read-only BalootGame a non-host player renders: own hand real, the others as blanks.
 // legalBids / legalMoves only need public state + your own hand, so they work unchanged.
-export function viewGame(pub, mySeat, myCards) {
+export function viewGame(pub, mySeat, myCards, myBaloot = false) {
   const g = Object.assign(Object.create(BalootGame.prototype), pub);
   g.listeners = [];
   g.hands = pub.handCounts.map((n, s) => (s === mySeat ? myCards.slice() : new Array(n).fill(null)));
@@ -213,6 +217,7 @@ export function viewGame(pub, mySeat, myCards) {
   if (pub.lastTrick && g.tricks.length) g.tricks[g.tricks.length - 1] = pub.lastTrick;
   g.countedProjects = () => pub.shownProjects || [];
   g.projects = pub.declared || [];
+  if (myBaloot && !pub.balootDeclared) g.balootSeat = mySeat;   // only I know I hold it
   g.projectCandidates = [0, 1, 2, 3].map((s) =>
     s === mySeat && pub.mode && myCards.length === 8 ? detectProjects(myCards, pub.mode) : []);
   return g;

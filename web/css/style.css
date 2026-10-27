@@ -105,6 +105,7 @@ body {
   border: 2px solid transparent; transition: border-color .2s, box-shadow .2s;
 }
 .seat.active-turn .avatar { border-color: var(--gold); box-shadow: 0 0 16px rgba(232,196,92,.8); }
+.seat.buyer .name::after { content: "الشاري"; display: block; color: var(--gold); font-weight: 700; }
 .seat .name { font-size: 12px; margin-top: 3px; opacity: .85; }
 .seat-top { top: 6px; left: 50%; transform: translateX(-50%); }
 .seat-left { top: 42%; left: 10px; transform: translateY(-50%); }

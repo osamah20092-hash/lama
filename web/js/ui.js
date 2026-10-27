@@ -1,9 +1,9 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=7";
-import { chooseBid, chooseCard } from "./ai.js?v=7";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=7";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=7";
-import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js?v=7";
-import * as rooms from "./rooms.js?v=7";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=8";
+import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=8";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=8";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=8";
+import { BET_TIERS, COINS_ON_WIN } from "./firebase-config.js?v=8";
+import * as rooms from "./rooms.js?v=8";
 
 const $ = (id) => document.getElementById(id);
 let ME = 0;                   // my seat; the table is drawn relative to it (me at the bottom)
@@ -172,7 +172,7 @@ function onEvent(ev) {
   switch (ev.type) {
     case "bid": if (ev.seat !== ME && ev.action.kind !== "pass") toast(`${seatName(ev.seat)}: ${bidLabel(ev.action, ev.phase)}`); break;
     case "contract": toast(contractText(ev.mode, ev.trump) + (ev.declarer === ME ? " · أنت الشاري" : ` · الشاري ${seatName(ev.declarer)}`)); break;
-    case "play-start": { const t = playStartText(ev); if (t) toast(t, 3200); break; }
+    case "baloot": toast(`👑 ${ev.seat === ME ? "قلت" : seatName(ev.seat) + ":"} بلوت`, 2600); break;
     case "declare": toast(`${ev.seat === ME ? "أعلنت" : seatName(ev.seat) + ":"} ${ev.types.map((t) => PROJECT_AR[t]).join(" + ")}`); break;
     case "projects": { const t = projectsText(ev.projects); if (t) toast(t, 3200); break; }
     case "qaid": toast(`⚖️ ${seatName(ev.seat)} قيّد — ${ev.correct ? "صح!" : "غلط!"}`, 3000); break;
@@ -189,7 +189,9 @@ function render() {
   if (!game) return;
   $("score-us").textContent = game.score[US()];
   $("score-them").textContent = game.score[THEM()];
-  $("contract-badge").textContent = game.mode ? contractText(game.mode, game.trump) + multText(game) : "—";
+  $("contract-badge").textContent = game.mode
+    ? contractText(game.mode, game.trump) + multText(game) + " · " + (game.declarer === ME ? "أنت الشاري" : "الشاري " + seatName(game.declarer))
+    : "—";
 
   renderHand();
   renderOpponents();
@@ -205,8 +207,16 @@ function renderActions() {
   const canDecl = ME >= 0 && !busy && game.canDeclare(ME);
   decl.style.display = canDecl ? "" : "none";
   if (canDecl) decl.textContent = "📢 أعلن: " + game.projectCandidates[ME].map((p) => PROJECT_AR[p.type]).join(" + ");
+  $("btn-baloot").style.display = ME >= 0 && !busy && game.canDeclareBaloot(ME) ? "" : "none";
   $("btn-qaid").style.display = online && game.strict === false && game.phase === "playing" && ME >= 0 ? "" : "none";
 }
+
+$("btn-baloot").onclick = () => {
+  if (busy || !game.canDeclareBaloot(ME)) return;
+  if (online && !online.isHost) { sendMove({ kind: "baloot" }); return; }
+  game.declareBaloot(ME);
+  render();
+};
 
 $("btn-declare").onclick = () => {
   if (busy || !game.canDeclare(ME)) return;
@@ -264,6 +274,7 @@ function renderOpponents() {
       const b = document.createElement("div"); b.className = "mini-card"; el.appendChild(b);
     }
     $("seat-" + r).classList.toggle("active-turn", game.phase === "playing" && game.turn === s);
+    $("seat-" + r).classList.toggle("buyer", !!game.mode && game.declarer === s);
   }
 }
 
@@ -465,20 +476,30 @@ function maybeBotTurn() {
     return;
   }
   // Playing bots
-  if (game.phase === "playing" && isBot(game.turn)) {
-    afterPlayFlow();
-  }
+  if (game.phase === "playing") afterPlayFlow();
+}
+
+// Free play: a bot whose opponents' revoke has been proven calls قيد, like a sharp player would.
+function maybeBotQaid() {
+  if (game.strict !== false || botTimer) return false;
+  const caller = [0, 1, 2, 3].find((s) => isBot(s) && seesRevoke(game, s));
+  if (caller === undefined) return false;
+  botLater(900, () => { if (game.phase === "playing" && seesRevoke(game, caller)) game.claimQaid(caller); });
+  return true;
 }
 
 function afterPlayFlow() {
   if (!game || game.phase !== "playing") return;
+  if (maybeBotQaid()) return;
   if (!isBot(game.turn)) { render(); return; }
   // Leading a new trick: wait until the finished one has been seen by everyone.
   const leading = !game.currentTrick.length && game.tricks.length;
   botLater(leading ? TRICK_HOLD_MS + 300 : 700, () => {
     if (game.phase !== "playing" || !isBot(game.turn)) return;
     game.declareProjects(game.turn);   // bots never forget their projects
-    game.play(game.turn, chooseCard(game, game.turn).id);
+    const card = chooseCard(game, game.turn);
+    if (shouldSayBaloot(game, game.turn, card)) game.declareBaloot(game.turn);
+    game.play(game.turn, card.id);
     setTimeout(afterPlayFlow);
   });
 }
@@ -543,10 +564,6 @@ function multText(g) {
   return m && g.mode === "hokom" && g.multiplier !== 3 ? m + (g.locked ? " مقفول" : " مفتوح") : m;
 }
 
-function playStartText(ev) {
-  return ev.balootSeat !== null && ev.balootSeat !== undefined ? `بلوت مع ${seatName(ev.balootSeat)}` : "";
-}
-
 // After the first trick: which declared projects count.
 function projectsText(projects) {
   if (!projects.length) return "";
@@ -571,7 +588,7 @@ function toast(msg, ms = 1900) {
 // (optional PIN, lock, kick, pick seats/teams) → empty seats become bots → play. No coins.
 // The host's browser runs the real game; see rooms.js for the data flow.
 // =====================================================================
-const PUB_EVENTS = new Set(["bid", "contract", "play-start", "declare", "projects", "qaid", "round-end", "match-end", "redeal"]);
+const PUB_EVENTS = new Set(["bid", "contract", "play-start", "declare", "baloot", "projects", "qaid", "round-end", "match-end", "redeal"]);
 
 $("btn-private").onclick = () => {
   if (!state.user) {
@@ -691,7 +708,7 @@ async function enterRoom(code, isHost) {
     online.unsubs.push(rooms.watchMyHand(code, (hand) => {
       if (!online) return;
       online.hand = hand;
-      if (online.pub && ME >= 0) { game = rooms.viewGame(online.pub, ME, myCards()); render(); }
+      if (online.pub && ME >= 0) { game = rooms.viewGame(online.pub, ME, myCards(), myBaloot()); render(); }
     }));
   }
   online.unsubs.push(rooms.watchRoom(code, onRoom));
@@ -699,6 +716,7 @@ async function enterRoom(code, isHost) {
 
 // My cards from the private hand doc, only if it's for the seat I'm in now.
 const myCards = () => (online.hand && online.hand.seat === ME ? online.hand.cards : []);
+const myBaloot = () => !!(online.hand && online.hand.seat === ME && online.hand.baloot);
 
 function exitRoom(msg) {
   if (!online) return;
@@ -758,7 +776,7 @@ function onRoom(room) {
   }
   online.pub = pub;
   busy = false;
-  game = rooms.viewGame(pub, ME, myCards());
+  game = rooms.viewGame(pub, ME, myCards(), myBaloot());
   if (!$("screen-game").classList.contains("active")) enterGameScreen();
   payStakeOnce();
   // Replay the host's events we haven't seen (toasts, round results). Skip history on first sight.
@@ -1010,6 +1028,7 @@ function hostOnAction(a) {
   const ok = a.kind === "bid" ? game.bid(a.seat, a.action)
            : a.kind === "play" ? game.play(a.seat, a.cardId)
            : a.kind === "declare" ? game.declareProjects(a.seat)
+           : a.kind === "baloot" ? game.declareBaloot(a.seat)
            : a.kind === "qaid" ? game.claimQaid(a.seat) : false;
   if (!ok) { schedulePublish(); return; }      // resend state so the sender is unblocked
   render();
