@@ -1,6 +1,7 @@
 import { BalootGame, TEAM_OF } from "./engine.js";
 import { chooseBid, chooseCard } from "./ai.js";
 import { SUIT_INFO, RANK_AR, SUITS } from "./deck.js";
+import { initFirebase, onUserChange, signIn, signUp, logout, state } from "./auth.js";
 
 const HUMAN = 0;              // the human player's seat
 const $ = (id) => document.getElementById(id);
@@ -17,7 +18,73 @@ $("btn-how").onclick = () => show("screen-how");
 $("btn-how-back").onclick = () => show("screen-home");
 $("btn-home").onclick = () => { show("screen-home"); };
 $("btn-next").onclick = () => { $("result-panel").classList.add("hidden"); if (game.phase === "matchEnd") show("screen-home"); else { game.nextRound(); } };
-show("screen-home");
+
+// ---------- Auth wiring ----------
+$("btn-logout").onclick = async () => { await logout(); };
+$("btn-admin").onclick = () => { location.href = "admin.html"; };
+$("link-login").onclick = (e) => { e.preventDefault(); show("screen-auth"); };
+$("btn-auth-guest").onclick = () => { renderWallet(null); show("screen-home"); };
+
+let authMode = "login";
+document.querySelectorAll(".auth-tab").forEach((tab) => {
+  tab.onclick = () => {
+    authMode = tab.dataset.tab;
+    document.querySelectorAll(".auth-tab").forEach((t) => t.classList.toggle("active", t === tab));
+    $("auth-name").style.display = authMode === "register" ? "block" : "none";
+    $("btn-auth-submit").textContent = authMode === "register" ? "إنشاء الحساب" : "دخول";
+    $("auth-error").textContent = "";
+  };
+});
+
+$("btn-auth-submit").onclick = async () => {
+  const email = $("auth-email").value.trim();
+  const pass = $("auth-pass").value;
+  const name = $("auth-name").value.trim();
+  $("auth-error").textContent = "";
+  if (!email || !pass) { $("auth-error").textContent = "اكتب الإيميل وكلمة السر"; return; }
+  try {
+    if (authMode === "register") await signUp(email, pass, name || undefined);
+    else await signIn(email, pass);
+    // onUserChange will route to home
+  } catch (err) {
+    $("auth-error").textContent = translateAuthError(err);
+  }
+};
+
+function translateAuthError(err) {
+  const c = (err && err.code) || "";
+  if (c.includes("invalid-credential") || c.includes("wrong-password") || c.includes("user-not-found")) return "الإيميل أو كلمة السر غير صحيحة";
+  if (c.includes("email-already-in-use")) return "هذا الإيميل مسجّل مسبقاً";
+  if (c.includes("weak-password")) return "كلمة السر قصيرة (٦ أحرف على الأقل)";
+  if (c.includes("invalid-email")) return "صيغة الإيميل غير صحيحة";
+  return "صار خطأ، حاول مرة ثانية";
+}
+
+function renderWallet(profile) {
+  if (profile) {
+    $("wallet-name").textContent = profile.name;
+    $("wallet-coins").textContent = profile.coins;
+    $("btn-logout").style.display = "block";
+    $("link-login").style.display = "none";
+    $("btn-admin").style.display = profile.isAdmin ? "block" : "none";
+  } else {
+    $("wallet-name").textContent = "ضيف";
+    $("wallet-coins").textContent = "—";
+    $("btn-logout").style.display = "none";
+    $("btn-admin").style.display = "none";
+    $("link-login").style.display = state.configured ? "block" : "none";
+  }
+}
+
+async function boot() {
+  const configured = await initFirebase();
+  if (!configured) { renderWallet(null); show("screen-home"); return; } // guest mode
+  onUserChange((user) => {
+    if (user) { renderWallet(state.profile); show("screen-home"); }
+    else { renderWallet(null); show("screen-auth"); }
+  });
+}
+boot();
 
 // ---------- Start ----------
 function startGame() {

@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ⚠️ Put YOUR admin email(s) here — must match ADMIN_EMAILS in web/js/firebase-config.js
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email in ['osamah20092@gmail.com'];
+    }
+
+    match /users/{uid} {
+      // Read your own profile; admin reads everyone.
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+
+      // Create your own profile once, with the starting balance and non-admin.
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.coins == 1000
+        && request.resource.data.isAdmin == false;
+
+      // Admin can change anything (balances). A normal user may edit their own
+      // profile BUT cannot change coins or make themselves admin.
+      allow update: if isAdmin()
+        || (request.auth != null
+            && request.auth.uid == uid
+            && request.resource.data.coins == resource.data.coins
+            && request.resource.data.isAdmin == resource.data.isAdmin);
+
+      allow delete: if isAdmin();
+    }
+  }
+}

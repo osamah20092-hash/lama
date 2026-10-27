@@ -9,14 +9,42 @@
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
-  <!-- Home -->
-  <section id="screen-home" class="screen active">
+  <!-- Splash while auth loads -->
+  <section id="screen-splash" class="screen active">
+    <div class="splash"><h1 class="logo">بلوت <span>لمّة</span></h1><div class="spinner"></div></div>
+  </section>
+
+  <!-- Auth -->
+  <section id="screen-auth" class="screen">
     <div class="home-card">
       <h1 class="logo">بلوت <span>لمّة</span></h1>
-      <p class="tagline">العب ضد الكمبيوتر — حكم وصن</p>
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login">دخول</button>
+        <button class="auth-tab" data-tab="register">حساب جديد</button>
+      </div>
+      <input class="field" id="auth-name" type="text" placeholder="الاسم" style="display:none" />
+      <input class="field" id="auth-email" type="email" placeholder="الإيميل" autocomplete="username" />
+      <input class="field" id="auth-pass" type="password" placeholder="كلمة السر" autocomplete="current-password" />
+      <div class="auth-error" id="auth-error"></div>
+      <button class="btn btn-primary" id="btn-auth-submit">دخول</button>
+      <button class="btn btn-ghost" id="btn-auth-guest">العب كضيف</button>
+    </div>
+  </section>
+
+  <!-- Home -->
+  <section id="screen-home" class="screen">
+    <div class="home-card">
+      <h1 class="logo">بلوت <span>لمّة</span></h1>
+      <div class="wallet" id="wallet-box">
+        <div class="wallet-name" id="wallet-name">ضيف</div>
+        <div class="wallet-coins">🪙 <b id="wallet-coins">—</b></div>
+      </div>
       <button class="btn btn-primary" id="btn-play-cpu">🎮 العب ضد الكمبيوتر</button>
       <button class="btn btn-ghost" id="btn-how">❔ كيف ألعب</button>
-      <div class="home-foot">نسخة تجريبية · الحسابات والمحفظة قريباً</div>
+      <button class="btn btn-ghost" id="btn-admin" style="display:none">🛠️ لوحة الإدارة</button>
+      <button class="btn btn-ghost" id="btn-logout" style="display:none">تسجيل خروج</button>
+      <a class="auth-link" id="link-login" href="#">عندك حساب؟ سجّل دخول للمحفظة</a>
+      <div class="home-foot">بلوت لمّة · نسخة تجريبية</div>
     </div>
   </section>
 

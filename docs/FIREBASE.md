@@ -1,0 +1,64 @@
+# إعداد Firebase (الحسابات + المحفظة + الإدارة)
+
+الكود جاهز. تحتاج تنشئ مشروع Firebase مجاني وتحط إعداداته. اللعبة تشتغل كـ"ضيف"
+إلى أن تكمّل هذي الخطوات، وبعدها تظهر الحسابات والمحفظة تلقائياً.
+
+## 1) أنشئ المشروع
+1. ادخل <https://console.firebase.google.com> ← **Add project** ← سمّه مثلاً `baloot-lamma`.
+2. تقدر تعطّل Google Analytics (مو ضروري).
+
+## 2) فعّل تسجيل الدخول
+- من القائمة اليسرى: **Build ▸ Authentication ▸ Get started**.
+- بوّب **Sign-in method** ← فعّل **Email/Password** ← Save.
+
+## 3) أنشئ قاعدة البيانات (Firestore)
+- **Build ▸ Firestore Database ▸ Create database**.
+- اختر **Production mode** ← اختر أقرب منطقة ← Enable.
+- بوّب **Rules** ← الصق محتوى ملف [`firestore.rules`](../firestore.rules) ← **Publish**.
+  - ⚠️ غيّر الإيميل داخل القواعد (`osamah20092@gmail.com`) لإيميلك لو مختلف.
+
+## 4) سجّل تطبيق ويب واحصل على الإعدادات
+- في **Project settings** (⚙️ جنب Project Overview) ← انزل لـ **Your apps** ← اضغط أيقونة الويب **`</>`**.
+- سمّه `web` ← Register app.
+- بيعطيك كائن `firebaseConfig`. انسخ القيم.
+
+## 5) الصق الإعدادات في الكود
+افتح [`web/js/firebase-config.js`](../web/js/firebase-config.js) وعبّي:
+```js
+export const FIREBASE_CONFIG = {
+  apiKey: "...",
+  authDomain: "....firebaseapp.com",
+  projectId: "...",
+  storageBucket: "....appspot.com",
+  messagingSenderId: "...",
+  appId: "...",
+};
+export const ADMIN_EMAILS = ["إيميلك@gmail.com"];  // هذا حساب الأدمن
+```
+> قيم `FIREBASE_CONFIG` مو سرّية — آمنة تُنشر على الويب. الأمان الحقيقي في قواعد Firestore.
+
+## 6) اعتمد نفسك كأدمن
+- شغّل الموقع، سجّل حساب جديد **بنفس إيميل الأدمن**.
+- بما إن إيميلك في `ADMIN_EMAILS` + في القواعد، بيظهر لك زر **🛠️ لوحة الإدارة** في الرئيسية.
+- من اللوحة تشوف كل الحسابات وتزيد/تنقص الأرصدة.
+
+## 7) ارفع التحديث
+```
+git add -A
+git commit -m "configure firebase"
+git push
+```
+GitHub Pages بيحدّث الموقع تلقائياً.
+
+---
+
+## كيف يشتغل الأمان
+- كل لاعب يقدر يقرأ **ملفه فقط**؛ الأدمن يقرأ الكل.
+- الرصيد (`coins`) **ما يقدر اللاعب يغيّره بنفسه** — الأدمن فقط. هذا يمنع الغش.
+- عند التسجيل، يُنشأ للاعب حساب برصيد بداية (١٠٠٠ كوين) تقدر تغيّره في `STARTING_BALANCE`.
+
+## الخطوة الجاية: ربح الكوينز عند الفوز
+فيه طريقتان:
+1. **للأصدقاء (ثقة):** نكرّم الفائز كوينز من طرف العميل — سريع لكن يمكن التحايل عليه نظرياً.
+2. **آمن ١٠٠٪ (Cloud Functions):** السيرفر هو اللي يصرف الكوينز — يحتاج تفعيل خطة Blaze (فيها حد مجاني لكن تبي بطاقة).
+نقررها سوا حسب ما يناسبك.

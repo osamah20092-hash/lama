@@ -43,6 +43,40 @@ body {
 .btn-primary { background: linear-gradient(135deg, var(--gold), #d4a93a); color: #2a1e00; box-shadow: var(--shadow); }
 .btn-ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); }
 
+/* ---------- Splash / spinner ---------- */
+#screen-splash.active { display: grid; place-items: center; }
+.splash { text-align: center; }
+.spinner { width: 34px; height: 34px; margin: 20px auto 0; border: 3px solid rgba(255,255,255,.2); border-top-color: var(--gold); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Auth ---------- */
+#screen-auth.active { display: grid; place-items: center; padding: 24px; }
+.auth-tabs { display: flex; gap: 8px; margin: 14px 0 18px; }
+.auth-tab { flex: 1; padding: 10px; border: 0; border-radius: 10px; background: rgba(255,255,255,.08); color: #fff; font-family: inherit; font-weight: 700; cursor: pointer; }
+.auth-tab.active { background: var(--gold); color: #2a1e00; }
+.field { width: 100%; padding: 13px; margin: 7px 0; border-radius: 12px; border: 1px solid rgba(255,255,255,.2); background: rgba(0,0,0,.25); color: #fff; font-family: inherit; font-size: 15px; text-align: right; }
+.field::placeholder { color: rgba(255,255,255,.5); }
+.auth-error { color: #ff9a8d; font-size: 13px; min-height: 18px; margin: 4px 2px; }
+.auth-link { display: block; margin-top: 14px; color: var(--gold); font-size: 13px; text-decoration: none; opacity: .9; }
+
+/* ---------- Wallet ---------- */
+.wallet { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: rgba(0,0,0,.25); border: 1px solid rgba(232,196,92,.35); border-radius: 14px; padding: 12px 16px; margin: 6px 0 20px; }
+.wallet-name { font-weight: 700; }
+.wallet-coins { font-weight: 800; }
+.wallet-coins b { color: var(--gold); }
+
+/* ---------- Admin ---------- */
+.admin-wrap { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+.admin-wrap h2 { color: var(--gold); }
+.user-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 12px 14px; margin: 8px 0; }
+.user-row .u-name { font-weight: 700; }
+.user-row .u-email { font-size: 12px; opacity: .6; }
+.user-row .u-coins { color: var(--gold); font-weight: 800; }
+.admin-actions { display: flex; gap: 6px; }
+.admin-actions button { border: 0; border-radius: 8px; padding: 8px 10px; font-weight: 700; cursor: pointer; font-family: inherit; background: rgba(255,255,255,.12); color: #fff; }
+.admin-actions .give { background: #1f8a4c; }
+.admin-actions .take { background: #a23b2e; }
+
 /* ---------- Top bar ---------- */
 .topbar {
   position: absolute; top: 0; inset-inline: 0; height: 54px; z-index: 5;
