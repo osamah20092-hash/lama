@@ -1,11 +1,11 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=15";
-import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=15";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, RANKS, cardLabel, cardStrength } from "./deck.js?v=15";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=15";
-import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=15";
-import * as rooms from "./rooms.js?v=15";
-import * as audio from "./audio.js?v=15";
-import * as stats from "./stats.js?v=15";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=16";
+import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=16";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, RANKS, cardLabel, cardStrength } from "./deck.js?v=16";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=16";
+import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=16";
+import * as rooms from "./rooms.js?v=16";
+import * as audio from "./audio.js?v=16";
+import * as stats from "./stats.js?v=16";
 
 const $ = (id) => document.getElementById(id);
 let ekkaArmed = false;   // I pressed إكة: it goes with the next card I lead
@@ -227,14 +227,14 @@ function enterGameScreen() {
 
 // Names/avatars around the table; online they change when someone sits, leaves or is replaced.
 function renderSeats() {
-  for (const r of [1, 2, 3]) {
+  for (const r of [0, 1, 2, 3]) {
     const s = (VIEW() + r) % 4;
     const seat = $("seat-" + r);
     const occ = online ? online.seats[s] : null;
-    seat.querySelector(".avatar").textContent = !online || occ?.bot ? "🤖" : "👤";
+    seat.querySelector(".avatar").textContent = r === 0 && !occ?.bot ? "👤" : !online || occ?.bot ? "🤖" : "👤";
     seat.querySelector(".name").textContent = online ? (occ?.name || "—") : SEAT_NAME[r];
     // Host: tap a player who dropped off to hand their seat to the computer.
-    seat.onclick = online?.isHost && occ && !occ.bot ? () => {
+    seat.onclick = online?.isHost && occ && !occ.bot && s !== ME ? () => {
       if (confirm(`تحوّل ${occ.name} للكمبيوتر؟`)) hostRemoveSeat(s, true);
     } : null;
   }
@@ -287,10 +287,6 @@ function render() {
   $("label-them").textContent = teamLabel(THEM());
   $("score-us").textContent = game.score[US()];
   $("score-them").textContent = game.score[THEM()];
-  $("contract-badge").textContent = game.mode
-    ? contractText(game.mode, game.trump) + multText(game) + " · " + (game.declarer === ME ? "أنت الشاري" : "الشاري " + seatName(game.declarer))
-    : "—";
-
   renderHand();
   renderOpponents();
   renderTrick();
@@ -405,6 +401,7 @@ function cardEl(card, { playable = false } = {}) {
 
 function renderHand() {
   const wrap = $("hand-0");
+  if (dragging) return;
   wrap.innerHTML = "";
   if (ME < 0) {   // spectator: the bottom player's cards stay face down
     for (let i = 0; i < game.hands[0].length; i++) {
@@ -419,10 +416,41 @@ function renderHand() {
   for (const card of hand) {
     const playable = legalIds.has(card.id);
     const el = cardEl(card, { playable });
-    if (playable) el.onclick = () => onHumanPlay(card.id);
+    if (playable) dragToPlay(el, card.id);
     else if (game.phase === "playing") el.classList.add("disabled"); // dim only during play
     wrap.appendChild(el);
   }
+}
+
+// A card is played by dragging it up onto the table; let go early and it slides back.
+// The hand isn't rebuilt while a card is held (renderHand waits for the drop).
+const DRAG_PLAY_PX = 60;
+let dragging = null;
+function dragToPlay(el, cardId) {
+  el.onpointerdown = (e) => {
+    if (dragging || e.button > 0) return;
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    dragging = { el, x: e.clientX, y: e.clientY };
+    el.classList.add("dragging");
+  };
+  el.onpointermove = (e) => {
+    if (dragging?.el !== el) return;
+    const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
+    el.style.transform = `translate(${dx}px, ${dy}px) scale(1.1)`;
+    el.classList.toggle("will-play", dy < -DRAG_PLAY_PX);
+  };
+  const drop = (e) => {
+    if (dragging?.el !== el) return;
+    const up = dragging.y - e.clientY;
+    dragging = null;
+    if (e.type === "pointerup" && up > DRAG_PLAY_PX) { onHumanPlay(cardId); return; }
+    el.classList.remove("dragging", "will-play");
+    el.style.transform = "";
+    render();
+  };
+  el.onpointerup = drop;
+  el.onpointercancel = drop;
 }
 
 // Biggest first (left to right): suits grouped with colours alternating, the trump suit first,
@@ -441,16 +469,28 @@ function sortHand(hand) {
     || cardStrength(b, mode, trump) - cardStrength(a, mode, trump));
 }
 
+// Seats around the table: card backs, a ring on whoever's turn it is (playing or bidding), and
+// the contract written beside the buyer's name.
 function renderOpponents() {
-  for (const r of [1, 2, 3]) {
+  const turnSeat = game.phase === "playing" ? (trickHeld() ? -1 : game.turn)
+    : BID_PHASES.includes(game.phase) ? game.bidTurn : -1;
+  for (const r of [0, 1, 2, 3]) {
     const s = (VIEW() + r) % 4;
-    const el = $("hand-" + r);
-    el.innerHTML = "";
-    for (let i = 0; i < game.hands[s].length; i++) {
-      const b = document.createElement("div"); b.className = "mini-card"; el.appendChild(b);
+    if (r) {
+      const el = $("hand-" + r);
+      el.innerHTML = "";
+      for (let i = 0; i < game.hands[s].length; i++) {
+        const b = document.createElement("div"); b.className = "mini-card"; el.appendChild(b);
+      }
     }
-    $("seat-" + r).classList.toggle("active-turn", game.phase === "playing" && game.turn === s);
-    $("seat-" + r).classList.toggle("buyer", !!game.mode && game.declarer === s);
+    const seat = $("seat-" + r);
+    const buyer = !!game.mode && game.declarer === s;
+    seat.classList.toggle("active-turn", turnSeat === s);
+    seat.classList.toggle("buyer", buyer);
+    const suit = game.mode === "hokom" && SUIT_INFO[game.trump];
+    const tag = !buyer ? "" : (suit ? `حكم <span class="suit ${suit.color}">${suit.symbol}</span>` : "صن") + multText(game);
+    const tagEl = seat.querySelector(".tag");
+    if (tagEl.innerHTML !== tag) tagEl.innerHTML = tag;
   }
 }
 
@@ -520,17 +560,17 @@ function renderProjectsShow() {
   const show = game.phase === "playing" ? projCards.filter((p) => projShownAt[p.seat]
     && (p.seat === owning || now - projShownAt[p.seat] < PROJ_SHOW_MS)) : [];
   box.classList.toggle("hidden", !show.length);
-  const html = show.map((p) =>
-    `<div class="proj-row"><b>${p.seat === ME ? "أنت" : seatName(p.seat)}: ${PROJECT_AR[p.type]}</b>` +
-    p.cards.map((c) => `<img src="${cardSrc(c)}" alt="">`).join("") + "</div>").join("");
+  // One bubble per owner, placed next to their seat.
+  const html = [...new Set(show.map((p) => p.seat))].map((s) =>
+    `<div class="proj-bubble pb-${rel(s)}">` + show.filter((p) => p.seat === s).map((p) =>
+      `<div class="proj-row"><b>${PROJECT_AR[p.type]}</b>` +
+      p.cards.map((c) => `<img src="${cardSrc(c)}" alt="">`).join("") + "</div>").join("") + "</div>").join("");
   if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
 }
 
+// Whose turn it is shows as a ring on their seat (renderOpponents); only the host notice is text.
 function renderTurn() {
-  if (hostAway()) { $("turn-indicator").textContent = "⏳ المضيف طلع من الصفحة — اللعب يكمّل لما يرجع"; return; }
-  $("turn-indicator").textContent =
-    game.phase === "playing" ? (game.turn === ME ? "دورك" : "دور " + seatName(game.turn)) :
-    BID_PHASES.includes(game.phase) ? (game.phase === "doubling" ? "الدبل" : "المزايدة") : "";
+  $("turn-indicator").textContent = hostAway() ? "⏳ المضيف طلع من الصفحة — اللعب يكمّل لما يرجع" : "";
 }
 
 // ---------- Bidding UI ----------
@@ -568,14 +608,11 @@ function bidTitle() {
 function renderBidPanel() {
   const panel = $("bid-panel");
   const showForHuman = BID_PHASES.includes(game.phase) && game.bidTurn === ME && !busy;
+  // The buttons sit in a bar along the bottom; the hand moves up above them (--bidbar).
+  $("screen-game").classList.toggle("bidding", showForHuman);
   if (!showForHuman) { panel.classList.add("hidden"); return; }
-  panel.classList.remove("hidden");   // keep the hand visible so you can judge your cards
-
-  // The revealed card is already in the buyer's hand once doubling starts.
-  const flip = $("flip-card");
-  flip.className = "flip-card";
-  flip.style.display = game.phase === "doubling" ? "none" : "";
-  flip.innerHTML = `<img class="card-face" src="${cardSrc(game.flip)}" alt="" draggable="false">`;
+  panel.classList.remove("hidden");
+  requestAnimationFrame(() => $("screen-game").style.setProperty("--bidbar", panel.offsetHeight + "px"));
 
   $("bid-title").textContent = bidTitle();
   const box = $("bid-buttons");
