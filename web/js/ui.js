@@ -1,11 +1,11 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=16";
-import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=16";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, RANKS, cardLabel, cardStrength } from "./deck.js?v=16";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=16";
-import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=16";
-import * as rooms from "./rooms.js?v=16";
-import * as audio from "./audio.js?v=16";
-import * as stats from "./stats.js?v=16";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=17";
+import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=17";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, RANKS, cardLabel, cardStrength } from "./deck.js?v=17";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=17";
+import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=17";
+import * as rooms from "./rooms.js?v=17";
+import * as audio from "./audio.js?v=17";
+import * as stats from "./stats.js?v=17";
 
 const $ = (id) => document.getElementById(id);
 let ekkaArmed = false;   // I pressed إكة: it goes with the next card I lead
@@ -399,33 +399,65 @@ function cardEl(card, { playable = false } = {}) {
   return el;
 }
 
+// The hand keeps its card elements between renders: new cards slide in (dealt), and when a card
+// leaves the others glide into place (FLIP) instead of the whole hand jumping.
 function renderHand() {
   const wrap = $("hand-0");
   if (dragging) return;
-  wrap.innerHTML = "";
   if (ME < 0) {   // spectator: the bottom player's cards stay face down
-    for (let i = 0; i < game.hands[0].length; i++) {
-      const b = document.createElement("div"); b.className = "mini-card"; wrap.appendChild(b);
-    }
+    for (const el of [...wrap.children]) if (!el.classList.contains("mini-card")) el.remove();
+    setCount(wrap, game.hands[0].length);
     return;
   }
   const hand = sortHand(game.hands[ME]);
   const legalIds = new Set(
     (game.phase === "playing" && game.turn === ME && !busy && !trickHeld() ? game.legalMoves(ME) : []).map((c) => c.id)
   );
-  for (const card of hand) {
+  const old = new Map(), before = new Map();
+  for (const el of wrap.children) if (el.dataset.id) { old.set(el.dataset.id, el); before.set(el, el.getBoundingClientRect().left); }
+  let dealt = 0;
+  const els = hand.map((card) => {
+    let el = old.get(card.id);
+    if (!el) {
+      el = cardEl(card);
+      el.dataset.id = card.id;
+      el.classList.add("dealt");
+      el.style.animationDelay = dealt++ * 45 + "ms";
+      el.addEventListener("animationend", () => el.classList.remove("dealt"), { once: true });
+    }
     const playable = legalIds.has(card.id);
-    const el = cardEl(card, { playable });
+    el.classList.toggle("playable", playable);
+    el.classList.toggle("disabled", !playable && game.phase === "playing");   // dim only during play
+    el.onpointerdown = el.onpointermove = el.onpointerup = el.onpointercancel = null;
     if (playable) dragToPlay(el, card.id);
-    else if (game.phase === "playing") el.classList.add("disabled"); // dim only during play
-    wrap.appendChild(el);
+    return el;
+  });
+  for (const el of [...wrap.children]) if (!els.includes(el)) el.remove();
+  // Move only the cards that are out of place (moving a node restarts its animation).
+  els.forEach((el, i) => { if (wrap.children[i] !== el) wrap.insertBefore(el, wrap.children[i] || null); });
+  for (const [el, x] of before) {
+    if (!el.isConnected) continue;
+    const dx = x - el.getBoundingClientRect().left;
+    if (!dx) continue;
+    el.style.transition = "none";
+    el.style.translate = `${dx}px 0`;
+    el.getBoundingClientRect();   // apply the start position before gliding back
+    el.style.transition = "";
+    el.style.translate = "";
   }
+}
+
+// Card backs: add or remove only the difference.
+function setCount(box, n) {
+  while (box.children.length > n) box.lastChild.remove();
+  while (box.children.length < n) { const b = document.createElement("div"); b.className = "mini-card"; box.appendChild(b); }
 }
 
 // A card is played by dragging it up onto the table; let go early and it slides back.
 // The hand isn't rebuilt while a card is held (renderHand waits for the drop).
 const DRAG_PLAY_PX = 60;
 let dragging = null;
+let dropPoint = null;
 function dragToPlay(el, cardId) {
   el.onpointerdown = (e) => {
     if (dragging || e.button > 0) return;
@@ -444,9 +476,15 @@ function dragToPlay(el, cardId) {
     if (dragging?.el !== el) return;
     const up = dragging.y - e.clientY;
     dragging = null;
-    if (e.type === "pointerup" && up > DRAG_PLAY_PX) { onHumanPlay(cardId); return; }
+    const r = el.getBoundingClientRect();
     el.classList.remove("dragging", "will-play");
     el.style.transform = "";
+    if (e.type === "pointerup" && up > DRAG_PLAY_PX) {
+      // The table card takes off from where the finger let go (renderTrick).
+      dropPoint = { id: cardId, x: r.left + r.width / 2, y: r.top + r.height / 2, at: Date.now() };
+      onHumanPlay(cardId);
+      return;
+    }
     render();
   };
   el.onpointerup = drop;
@@ -476,13 +514,7 @@ function renderOpponents() {
     : BID_PHASES.includes(game.phase) ? game.bidTurn : -1;
   for (const r of [0, 1, 2, 3]) {
     const s = (VIEW() + r) % 4;
-    if (r) {
-      const el = $("hand-" + r);
-      el.innerHTML = "";
-      for (let i = 0; i < game.hands[s].length; i++) {
-        const b = document.createElement("div"); b.className = "mini-card"; el.appendChild(b);
-      }
-    }
+    if (r) setCount($("hand-" + r), game.hands[s].length);
     const seat = $("seat-" + r);
     const buyer = !!game.mode && game.declarer === s;
     seat.classList.toggle("active-turn", turnSeat === s);
@@ -522,10 +554,19 @@ function renderTrick() {
       cls: `trick-card tc-${rel(p.seat)}` + (p.seat === winner ? " win" : ""),
     }));
   }
-  const keep = new Map();
+  const keep = new Map(), gone = [];
   for (const el of [...area.children]) {
+    if (el.classList.contains("leaving")) continue;
     if (items.some((it) => it.key === el.dataset.key)) keep.set(el.dataset.key, el);
-    else el.remove();
+    else gone.push(el);
+  }
+  // A collected trick slides off towards the player who won it.
+  const winEl = gone.find((el) => el.classList.contains("win"));
+  const to = winEl && [...winEl.classList].find((c) => c.startsWith("tc-"));
+  for (const el of gone) {
+    if (!to) { el.remove(); continue; }
+    el.classList.add("leaving", "to-" + to.slice(3));
+    setTimeout(() => el.remove(), 420);
   }
   for (const it of items) {
     let el = keep.get(it.key);
@@ -534,7 +575,15 @@ function renderTrick() {
       el.dataset.key = it.key;
       el.innerHTML = `<img class="card-face" src="${cardSrc(it.card)}" alt="" draggable="false">` +
         (it.ekka ? `<span class="ekka-tag">إكة</span>` : "");
+      el.className = it.cls;
       area.appendChild(el);
+      // My dragged card flies on from where it was dropped; others come from their seat.
+      if (dropPoint && `${game.round}:${dropPoint.id}` === it.key && Date.now() - dropPoint.at < 1500) {
+        const r = el.getBoundingClientRect();
+        el.style.setProperty("--fx", `${dropPoint.x - (r.left + r.width / 2)}px`);
+        el.style.setProperty("--fy", `${dropPoint.y - (r.top + r.height / 2)}px`);
+        dropPoint = null;
+      }
     }
     if (el.className !== it.cls) el.className = it.cls;
   }
@@ -559,13 +608,24 @@ function renderProjectsShow() {
   const owning = game.phase === "playing" && game.tricks.length === 1 && !trickHeld() ? game.turn : -1;
   const show = game.phase === "playing" ? projCards.filter((p) => projShownAt[p.seat]
     && (p.seat === owning || now - projShownAt[p.seat] < PROJ_SHOW_MS)) : [];
-  box.classList.toggle("hidden", !show.length);
-  // One bubble per owner, placed next to their seat.
-  const html = [...new Set(show.map((p) => p.seat))].map((s) =>
-    `<div class="proj-bubble pb-${rel(s)}">` + show.filter((p) => p.seat === s).map((p) =>
+  box.classList.remove("hidden");
+  // One bubble per owner, laid on the table in front of their seat; it fades in and out.
+  const seats = [...new Set(show.map((p) => p.seat))];
+  for (const el of [...box.children]) {
+    if (seats.includes(+el.dataset.seat) || el.classList.contains("leaving")) continue;
+    el.classList.add("leaving");
+    setTimeout(() => el.remove(), 300);
+  }
+  for (const s of seats) {
+    if ([...box.children].some((el) => +el.dataset.seat === s && !el.classList.contains("leaving"))) continue;
+    const el = document.createElement("div");
+    el.className = `proj-bubble pb-${rel(s)}`;
+    el.dataset.seat = s;
+    el.innerHTML = show.filter((p) => p.seat === s).map((p) =>
       `<div class="proj-row"><b>${PROJECT_AR[p.type]}</b>` +
-      p.cards.map((c) => `<img src="${cardSrc(c)}" alt="">`).join("") + "</div>").join("") + "</div>").join("");
-  if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
+      p.cards.map((c) => `<img src="${cardSrc(c)}" alt="">`).join("") + "</div>").join("");
+    box.appendChild(el);
+  }
 }
 
 // Whose turn it is shows as a ring on their seat (renderOpponents); only the host notice is text.

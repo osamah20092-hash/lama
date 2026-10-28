@@ -457,3 +457,88 @@ body {
 /* Declare / إكة / قيد buttons float above my name plate, not over it */
 .action-bar { bottom: calc(var(--cw) * 1.47 + 34px + 44px); }
 .pb-0 { bottom: 92px; }
+
+/* ===================== Motion ===================== */
+/* A played card flies in from its player's seat (mine from where I dropped it: --fx/--fy set in JS).
+   "backwards" only, so the animation never holds values and the collect transition can run. */
+.trick-card { animation: fly .34s cubic-bezier(.2,.75,.3,1) backwards; }
+.trick-card.tc-0 { --fx: 0px; --fy: 150px; }
+.trick-card.tc-2 { --fx: 0px; --fy: -150px; }
+.trick-card.tc-1 { --fx: 150px; --fy: 0px; }
+.trick-card.tc-3 { --fx: -150px; --fy: 0px; }
+.trick-card.flip-center { --fx: 0px; --fy: -24px; }
+@keyframes fly { from { translate: var(--fx, 0) var(--fy, 0); opacity: .35; scale: .92; } }
+/* The won trick slides off towards the winner */
+.trick-card.leaving { transition: translate .4s ease-in, opacity .4s ease-in, scale .4s ease-in; opacity: 0; scale: .55; }
+.trick-card.leaving.to-0 { translate: 0 170px; }
+.trick-card.leaving.to-2 { translate: 0 -170px; }
+.trick-card.leaving.to-1 { translate: 170px 0; }
+.trick-card.leaving.to-3 { translate: -170px 0; }
+
+/* Hand: new cards are dealt in one after another, the rest glide when a card leaves (FLIP in JS) */
+.myhand .card { transition: transform .15s ease, box-shadow .15s ease, translate .3s cubic-bezier(.2,.8,.3,1), filter .2s; }
+.myhand .card.dealt { animation: deal .38s cubic-bezier(.2,.8,.3,1) backwards; }
+@keyframes deal { from { opacity: 0; translate: 0 -60px; scale: .85; } }
+.myhand-wrap, .table { transition: bottom .25s ease; }
+.seat .avatar { transition: border-color .25s, box-shadow .25s; }
+
+/* Panels ease in */
+.panel:not(.hidden) { animation: pop .22s ease-out; }
+#bid-panel:not(.hidden) { animation: slide-up .25s cubic-bezier(.2,.8,.3,1); }
+@keyframes pop { from { opacity: 0; scale: .94; } }
+@keyframes slide-up { from { translate: 0 100%; } }
+
+/* Projects: laid on the table in front of their owner, cards under the name of the project */
+.proj-bubble { padding: 4px 6px; background: rgba(30,18,8,.82); animation: pop .25s ease-out backwards; transition: opacity .3s ease, scale .3s ease; }
+.proj-bubble.leaving { opacity: 0; scale: .85; }
+.proj-bubble .proj-row { flex-wrap: wrap; justify-content: center; max-width: 124px; gap: 2px; }
+.proj-bubble .proj-row b { flex-basis: 100%; text-align: center; margin: 0; font-size: 12px; }
+.proj-bubble .proj-row img { width: 22px; height: 32px; }
+.pb-2 { top: 108px; bottom: auto; left: 50%; right: auto; transform: translateX(-50%); }
+.pb-0 { bottom: 70px; top: auto; left: 50%; right: auto; transform: translateX(-50%); }
+.pb-1 { right: 54px; left: auto; top: calc(50% - 128px); transform: none; }
+.pb-3 { left: 54px; right: auto; top: calc(50% - 128px); transform: none; }
+
+/* ===================== Same majlis theme on every page ===================== */
+:root { --panel: rgba(42,26,11,.97); }
+body {
+  background:
+    radial-gradient(ellipse 85% 65% at 50% 40%, rgba(255,250,238,.7), transparent 70%),
+    repeating-linear-gradient(45deg, rgba(140,98,50,.07) 0 2px, transparent 2px 18px),
+    repeating-linear-gradient(-45deg, rgba(140,98,50,.07) 0 2px, transparent 2px 18px),
+    linear-gradient(#f0e4cc, #d9c39d);
+  background-attachment: fixed;
+}
+.splash { color: #3a2410; }
+.home-card, .how, .admin-wrap {
+  position: relative; overflow: hidden;
+  background: linear-gradient(#3f2812, #2a1a0a); border: 1px solid rgba(232,196,92,.5);
+  box-shadow: 0 0 0 3px #e9d6ad, 0 0 0 4px #7a4a22, 0 18px 40px rgba(60,35,10,.4);
+  backdrop-filter: none;
+}
+/* Sadu strip along the top and bottom of every card */
+.home-card::before, .home-card::after, .how::before, .how::after, .admin-wrap::before, .admin-wrap::after {
+  content: ""; position: absolute; inset-inline: 0; height: 12px; pointer-events: none;
+  background:
+    conic-gradient(from -45deg at 50% 100%, #e58a2e 90deg, transparent 0) 0 0 / 20px 10px repeat-x,
+    linear-gradient(#93231c, #93231c);
+}
+.home-card::before, .how::before, .admin-wrap::before { top: 0; }
+.home-card::after, .how::after, .admin-wrap::after { bottom: 0; transform: scaleY(-1); }
+.admin-wrap { margin-top: 16px; margin-bottom: 16px; border-radius: 18px; padding-top: 30px; }
+.sound-panel select option { background: #2a1a0a; }
+.panel { border-color: rgba(232,196,92,.5); }
+/* Menu screens scroll when their card is taller than the phone (auto margins centre without clipping) */
+#screen-home.active, #screen-auth.active, #screen-how.active, #screen-stats.active, #screen-room-menu.active, #screen-lobby.active {
+  display: flex; flex-direction: column; overflow-y: auto; place-items: initial;
+}
+#screen-home.active > *, #screen-auth.active > *, #screen-how.active > *, #screen-stats.active > *, #screen-room-menu.active > *, #screen-lobby.active > * { margin: auto; flex-shrink: 0; }
+/* Project cards fanned like a held hand, so a box fits in front of a side player */
+.proj-bubble .proj-row { flex-wrap: wrap; gap: 0; max-width: 96px; }
+.proj-bubble .proj-row img { width: 24px; height: 35px; box-shadow: -1px 0 3px rgba(0,0,0,.35); }
+.proj-bubble .proj-row img + img { margin-inline-start: -11px; }
+.proj-bubble .proj-row b { margin-bottom: 2px; }
+.pb-1 { right: 52px; top: calc(50% - 64px); }
+.pb-3 { left: 52px; top: calc(50% - 64px); }
+.pb-1, .pb-3 { top: calc(50% - 86px); }
+.pb-0 { bottom: 86px; }
