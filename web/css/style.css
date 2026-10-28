@@ -134,6 +134,13 @@ body {
 .tc-3 { left: 0; top: 50%; transform: translateY(-50%); }
 .tc-1 { right: 0; top: 50%; transform: translateY(-50%); }
 @keyframes drop { from { opacity: 0; transform: translateY(-8px) scale(.9); } }
+/* إكة: a tag on the led card, and the button stays lit once pressed */
+.ekka-tag {
+  position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
+  background: #c9a227; color: #1a1205; font-size: 11px; font-weight: 800;
+  padding: 1px 6px; border-radius: 6px; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+#btn-ekka.armed { background: #c9a227; color: #1a1205; border-color: #c9a227; }
 
 .turn-indicator { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); font-size: 13px; opacity: .8; }
 

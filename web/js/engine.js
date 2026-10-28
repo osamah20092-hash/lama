@@ -4,7 +4,7 @@
 // Teams: A = seats {0,2}, B = seats {1,3}.
 import {
   makeDeck, shuffle, SUITS, ORDER_SEQ, cardStrength, cardPoints,
-} from "./deck.js?v=13";
+} from "./deck.js?v=14";
 
 export const TEAM_OF = (seat) => (seat % 2 === 0 ? "A" : "B");
 const OTHER = (team) => (team === "A" ? "B" : "A");
@@ -61,7 +61,8 @@ export class BalootGame {
     this.projects = [];           // declared projects [{seat, type, set, top, suit, cards}]
     this.projectCandidates = [[], [], [], []]; // what each hand could declare (must be declared to count)
     this.projectTeam = null;      // only the team with the best project scores its projects
-    this.fouls = [];              // revokes made while strict is off: [{seat, card, trick}]
+    this.fouls = [];              // revokes (strict off) and wrong إكة calls: [{seat, card, trick, ...}]
+    this.ekkaTeams = [];          // teams that said إكة this round (opens قيد even when strict)
     this.balootSeat = null;       // holder of trump K+Q (بلوت)
     this.balootDeclared = false;  // بلوت only counts once its holder says it
     this.tricks = [];             // completed tricks
@@ -315,6 +316,19 @@ export class BalootGame {
   countedProjects() { return this.projects.filter((p) => TEAM_OF(p.seat) === this.projectTeam); }
 
   // ---------- Playing ----------
+  // إكة (Hokom): the leader may say it with a non-trump card that is the highest one left in its
+  // suit. It frees their partner from trumping. Saying it wrongly is a foul the other team can قيد.
+  canSayEkka(seat) {
+    return this.phase === "playing" && this.mode === "hokom" && seat === this.turn
+      && this.currentTrick.length === 0 && this.hands[seat].some((c) => c && c.suit !== this.trump);
+  }
+
+  // قيد is open in free play, and in strict play once the other team has said إكة this round.
+  canClaimQaid(seat) {
+    if (this.phase !== "playing") return false;
+    return !this.strict || (this.ekkaTeams || []).includes(OTHER(TEAM_OF(seat)));
+  }
+
   legalMoves(seat) {
     if (this.strict) return this.strictMoves(seat);
     return this.phase === "playing" && seat === this.turn ? this.hands[seat].slice() : [];
@@ -350,8 +364,13 @@ export class BalootGame {
       }
       return hasLed;
     }
-    // Void in led suit: partner winning → free; else must (over)trump if able, otherwise free.
-    if (!trumps.length || partnerWinning) return hand.slice();
+    // Void in led suit: partner winning → free, except the leader's partner, who must still trump
+    // unless the lead was an Ace or came with إكة. Opponent winning → must (over)trump if able.
+    if (!trumps.length) return hand.slice();
+    if (partnerWinning) {
+      const lead = this.currentTrick[0];
+      return win.seat !== lead.seat || lead.card.rank === "A" || lead.ekka ? hand.slice() : trumps;
+    }
     const up = higher(trumps);
     return up.length ? up : hand.slice();
   }
@@ -369,7 +388,7 @@ export class BalootGame {
     return best ? { seat: best.seat, team: TEAM_OF(best.seat), strength: best.strength, card: best.card } : null;
   }
 
-  play(seat, cardId) {
+  play(seat, cardId, { ekka = false } = {}) {
     if (this.phase !== "playing" || seat !== this.turn) return false;
     const legal = this.legalMoves(seat);
     const card = legal.find((c) => c.id === cardId);
@@ -378,10 +397,20 @@ export class BalootGame {
       const required = this.strictMoves(seat).map((c) => c.id);
       if (!required.includes(cardId)) this.fouls.push({ seat, card, trick: this.tricks.length, required });
     }
+    const entry = { seat, card };
+    if (ekka && this.canSayEkka(seat) && card.suit !== this.trump) {
+      entry.ekka = true;
+      this.ekkaTeams = [...new Set([...(this.ekkaTeams || []), TEAM_OF(seat)])];
+      // Wrong when a higher card of the suit is still unplayed (in anyone's hand, own included).
+      const st = cardStrength(card, this.mode, this.trump);
+      const higher = this.hands.flat()
+        .filter((c) => c.suit === card.suit && cardStrength(c, this.mode, this.trump) > st).map((c) => c.id);
+      if (higher.length) this.fouls.push({ seat, card, trick: this.tricks.length, ekka: true, higher });
+    }
 
     this.hands[seat] = this.hands[seat].filter((c) => c.id !== cardId);
-    this.currentTrick.push({ seat, card });
-    this.emit({ type: "play", seat, card });
+    this.currentTrick.push(entry);
+    this.emit({ type: "play", seat, card, ekka: !!entry.ekka });
 
     if (this.currentTrick.length === 4) {
       this.resolveTrick();
@@ -463,11 +492,11 @@ export class BalootGame {
     this.finishRound({ raw, cards, proj, bal, gp, result, winner, kabootTeam });
   }
 
-  // ---------- قيد (only when strict is off) ----------
-  // Any player may call قيد during play. If the other team revoked this round, the caller's team
-  // takes the whole round as if the buyers failed; a wrong call hands the round to the other team.
+  // ---------- قيد (free play, or after a إكة) ----------
+  // Any player may call قيد during play. If the other team revoked (or said إكة wrongly) this round,
+  // the caller's team takes the whole round as if the buyers failed; a wrong call hands it over.
   claimQaid(seat) {
-    if (this.strict || this.phase !== "playing") return false;
+    if (!this.canClaimQaid(seat)) return false;
     if (this.tricks.length === 0) this.settleProjects();
     const team = TEAM_OF(seat);
     const foul = this.fouls.find((f) => TEAM_OF(f.seat) !== team) || null;

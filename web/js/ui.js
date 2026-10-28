@@ -1,13 +1,14 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=13";
-import { chooseBid, chooseCard, shouldSayBaloot, seesRevoke } from "./ai.js?v=13";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=13";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=13";
-import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=13";
-import * as rooms from "./rooms.js?v=13";
-import * as audio from "./audio.js?v=13";
-import * as stats from "./stats.js?v=13";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=14";
+import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=14";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=14";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=14";
+import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=14";
+import * as rooms from "./rooms.js?v=14";
+import * as audio from "./audio.js?v=14";
+import * as stats from "./stats.js?v=14";
 
 const $ = (id) => document.getElementById(id);
+let ekkaArmed = false;   // I pressed إكة: it goes with the next card I lead
 let ME = 0;                   // my seat; the table is drawn relative to it (me at the bottom)
 let game = null;
 let busy = false;             // prevents input while bots act / animations run
@@ -254,7 +255,10 @@ function onEvent(ev) {
     case "projects": { const t = projectsText(ev.projects); if (t) toast(t, 3200); break; }
     case "qaid": toast(`⚖️ ${seatName(ev.seat)} قيّد — ${ev.correct ? "صح!" : "غلط!"}`, 3000); audio.say("qaid"); break;
     // A non-host already heard its own card when it tapped it (sendMove).
-    case "play": if (!(online && !online.isHost && ev.seat === ME)) audio.play("card"); break;
+    case "play":
+      if (!(online && !online.isHost && ev.seat === ME)) audio.play("card");
+      if (ev.ekka) { toast(`${ev.seat === ME ? "قلت" : seatName(ev.seat) + ":"} إكة`, 2200); audio.say("ekka"); }
+      break;
     case "trick-won": later(() => audio.play("collect"), TRICK_HOLD_MS); break;
     case "round-end": roundEndSound(ev); showRoundResult(ev); break;
     case "match-end": audio.play(ev.winner === US() ? "winMatch" : "loseMatch"); showMatchResult(ev); break;
@@ -337,8 +341,21 @@ function renderActions() {
   decl.style.display = canDecl ? "" : "none";
   if (canDecl) decl.textContent = "📢 أعلن: " + game.projectCandidates[ME].map((p) => PROJECT_AR[p.type]).join(" + ");
   $("btn-baloot").style.display = ME >= 0 && !busy && game.canDeclareBaloot(ME) ? "" : "none";
-  $("btn-qaid").style.display = online && game.strict === false && game.phase === "playing" && ME >= 0 ? "" : "none";
+  const canEkka = ME >= 0 && !busy && !trickHeld() && game.canSayEkka(ME);
+  if (!canEkka) ekkaArmed = false;
+  $("btn-ekka").style.display = canEkka ? "" : "none";
+  $("btn-ekka").classList.toggle("armed", ekkaArmed);
+  $("btn-ekka").textContent = ekkaArmed ? "✔ إكة — العب ورقتك" : "☝ إكة";
+  $("btn-qaid").style.display = ME >= 0 && game.canClaimQaid(ME) ? "" : "none";
 }
+
+// إكة is the player's own call, right or wrong: it rides on the next non-trump card they lead.
+// The game doesn't check it — a wrong one is a foul the other team can catch with قيد.
+$("btn-ekka").onclick = () => {
+  if (busy || !game.canSayEkka(ME)) return;
+  ekkaArmed = !ekkaArmed;
+  render();
+};
 
 $("btn-baloot").onclick = () => {
   if (busy || !game.canDeclareBaloot(ME)) return;
@@ -433,7 +450,8 @@ function renderTrick() {
   for (const p of plays) {
     const el = document.createElement("div");
     el.className = `trick-card tc-${rel(p.seat)}` + (p.seat === winner ? " win" : "");
-    el.innerHTML = `<img class="card-face" src="${cardSrc(p.card)}" alt="" draggable="false">`;
+    el.innerHTML = `<img class="card-face" src="${cardSrc(p.card)}" alt="" draggable="false">` +
+      (p.ekka ? `<span class="ekka-tag">إكة</span>` : "");
     area.appendChild(el);
   }
 }
@@ -541,8 +559,11 @@ function doBid(action) {
 // ---------- Human play ----------
 function onHumanPlay(cardId) {
   if (busy || game.turn !== ME) return;
-  if (online && !online.isHost) { sendMove({ kind: "play", cardId }); return; }
-  game.play(ME, cardId);
+  const card = game.hands[ME].find((c) => c.id === cardId);
+  const ekka = ekkaArmed && game.canSayEkka(ME) && card?.suit !== game.trump;
+  ekkaArmed = false;
+  if (online && !online.isHost) { sendMove({ kind: "play", cardId, ekka }); return; }
+  game.play(ME, cardId, { ekka });
   render();
   afterPlayFlow();
 }
@@ -553,8 +574,9 @@ function sendMove(move) {
     // Show my card on the table right away; the host's next snapshot confirms it.
     const card = game.hands[ME].find((c) => c.id === move.cardId);
     game.hands[ME] = game.hands[ME].filter((c) => c.id !== move.cardId);
-    game.currentTrick = [...game.currentTrick, { seat: ME, card }];
+    game.currentTrick = [...game.currentTrick, move.ekka ? { seat: ME, card, ekka: true } : { seat: ME, card }];
     audio.play("card");
+    if (move.ekka) audio.say("ekka");
   }
   busy = true; render();
   rooms.sendAction(online.code, ME, move).catch(() => { busy = false; render(); toast("تعذّر الإرسال، حاول مرة ثانية"); });
@@ -615,9 +637,9 @@ function maybeBotTurn() {
   if (game.phase === "playing") afterPlayFlow();
 }
 
-// Free play: a bot whose opponents' revoke has been proven calls قيد, like a sharp player would.
+// A bot whose opponents' foul (revoke or wrong إكة) has been proven calls قيد, like a sharp player would.
 function maybeBotQaid() {
-  if (game.strict !== false || botTimer) return false;
+  if (botTimer) return false;
   const caller = [0, 1, 2, 3].find((s) => isBot(s) && seesRevoke(game, s));
   if (caller === undefined) return false;
   botLater(900, () => { if (game.phase === "playing" && seesRevoke(game, caller)) game.claimQaid(caller); });
@@ -635,7 +657,7 @@ function afterPlayFlow() {
     game.declareProjects(game.turn);   // bots never forget their projects
     const card = chooseCard(game, game.turn);
     if (shouldSayBaloot(game, game.turn, card)) game.declareBaloot(game.turn);
-    game.play(game.turn, card.id);
+    game.play(game.turn, card.id, { ekka: shouldSayEkka(game, game.turn, card) });
     setTimeout(afterPlayFlow);
   });
 }
@@ -657,7 +679,9 @@ function showRoundResult(ev) {
   const f = ev.qaid?.foul;
   $("result-body").innerHTML =
     (ev.qaid ? `${seatName(ev.qaid.seat)} قيّد · ` +
-      (f ? `الغلطة: ${f.seat === ME ? "لعبت" : seatName(f.seat) + " لعب"} ${cardLabel(f.card)}` : "ما فيه غلطة") + "<br>" : "") +
+      (!f ? "ما فيه غلطة"
+        : f.ekka ? `الغلطة: ${f.seat === ME ? "قلت" : seatName(f.seat) + " قال"} إكة على ${cardLabel(f.card)} وفيه أكبر منها`
+        : `الغلطة: ${f.seat === ME ? "لعبت" : seatName(f.seat) + " لعب"} ${cardLabel(f.card)}`) + "<br>" : "") +
     `العقد: <b>${contractText(game.mode, game.trump)}${multText(game)}</b><br>` +
     line("الأبناط", ev.raw) +
     line("المشاريع", ev.proj) +
@@ -1302,7 +1326,7 @@ function hostOnAction(a) {
   const s = online.seats[a.seat];
   if (!s || s.bot || s.uid !== a.uid) return;
   const ok = a.kind === "bid" ? game.bid(a.seat, a.action)
-           : a.kind === "play" ? game.play(a.seat, a.cardId)
+           : a.kind === "play" ? game.play(a.seat, a.cardId, { ekka: !!a.ekka })
            : a.kind === "declare" ? game.declareProjects(a.seat)
            : a.kind === "baloot" ? game.declareBaloot(a.seat)
            : a.kind === "qaid" ? game.claimQaid(a.seat) : false;

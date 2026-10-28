@@ -146,7 +146,7 @@ export const VOICE_LINES = {
   hokom_spades: "حكم بستوني", hokom_hearts: "حكم كبّة", hokom_diamonds: "حكم ديناري", hokom_clubs: "حكم سباتي",
   double: "دبل", triple: "ثري", four: "فور", gahwa: "قهوة",
   sira: "سرا", p50: "خمسين", p100: "مية", p400: "أربعمية", baloot: "بلوت",
-  qaid: "قيد", kaboot: "كبوت", redeal: "توزيع جديد",
+  qaid: "قيد", kaboot: "كبوت", redeal: "توزيع جديد", ekka: "إكة",
 };
 
 // Recorded narrator packs you own. To add one: put <key>.mp3 files for VOICE_LINES in

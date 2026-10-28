@@ -1,8 +1,8 @@
 // Heuristic computer player for Baloot. Plays like a careful human: it remembers every card
 // played, notices who is out of a suit (or of trumps), knows which cards are now the boss
 // (أكبر ورقة باقية), feeds points to a partner who is sure to win, and doesn't waste big cards.
-import { makeDeck, cardStrength, cardPoints } from "./deck.js?v=13";
-import { TEAM_OF } from "./engine.js?v=13";
+import { makeDeck, cardStrength, cardPoints } from "./deck.js?v=14";
+import { TEAM_OF } from "./engine.js?v=14";
 
 // --- Bidding ---
 export function chooseBid(game, seat) {
@@ -258,19 +258,34 @@ export function shouldSayBaloot(game, seat, card) {
   return !game.hands[seat].some((c) => c.suit === game.trump && c.rank === other);
 }
 
-// Free play (قيد): a bot calls قيد once an opponent's revoke is proven — they later played a
-// card they were obliged to play earlier. Returns true when the bot at `seat` should call it.
+// A bot says إكة when it leads the boss card of a side suit (an Ace needs no call). It never
+// says it wrongly, so its partner is only freed from trumping when the lead really holds.
+export function shouldSayEkka(game, seat, card) {
+  if (!game.canSayEkka(seat) || card.suit === game.trump || card.rank === "A") return false;
+  const k = knowledge(game, seat);
+  return isMaster(k, card) && !k.hand.some((c) => c.suit === card.suit && k.str(c) > k.str(card));
+}
+
+// قيد: a bot calls it once an opponent's foul is proven — they later played a card they were
+// obliged to play earlier, or said إكة while a higher card was out and that card has since been
+// played or sits in the bot's own hand. Returns true when the bot at `seat` should call it.
 export function seesRevoke(game, seat) {
-  if (game.strict || game.phase !== "playing") return false;
+  if (!game.canClaimQaid(seat)) return false;
   const team = TEAM_OF(seat);
   const playedAfter = (s, trickNo) => {
     const ids = new Set();
-    game.tricks.forEach((t, i) => { if (t && i >= trickNo) for (const p of t.cards) if (p.seat === s) ids.add(p.card.id); });
-    for (const p of game.currentTrick) if (p.seat === s) ids.add(p.card.id);
+    game.tricks.forEach((t, i) => { if (t && i >= trickNo) for (const p of t.cards) if (s === null || p.seat === s) ids.add(p.card.id); });
+    for (const p of game.currentTrick) if (s === null || p.seat === s) ids.add(p.card.id);
     return ids;
   };
+  const mine = new Set(game.hands[seat].map((c) => c.id));
   return game.fouls.some((f) => {
-    if (TEAM_OF(f.seat) === team || !f.required) return false;
+    if (TEAM_OF(f.seat) === team) return false;
+    if (f.ekka) {
+      const seen = playedAfter(null, f.trick);
+      return f.higher.some((id) => mine.has(id) || seen.has(id));
+    }
+    if (!f.required) return false;
     const later = playedAfter(f.seat, f.trick);
     later.delete(f.card.id);
     return f.required.some((id) => later.has(id));
