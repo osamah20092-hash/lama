@@ -1,11 +1,11 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=18";
-import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=18";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, RANKS, cardLabel, cardStrength } from "./deck.js?v=18";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=18";
-import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=18";
-import * as rooms from "./rooms.js?v=18";
-import * as audio from "./audio.js?v=18";
-import * as stats from "./stats.js?v=18";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=19";
+import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=19";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, RANKS, cardLabel, cardStrength } from "./deck.js?v=19";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=19";
+import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=19";
+import * as rooms from "./rooms.js?v=19";
+import * as audio from "./audio.js?v=19";
+import * as stats from "./stats.js?v=19";
 
 const $ = (id) => document.getElementById(id);
 let ekkaArmed = false;   // I pressed إكة: it goes with the next card I lead
@@ -25,7 +25,11 @@ const THEM = () => (US() === "A" ? "B" : "A");
 // "لنا/لهم" for players; spectators get neutral team names (as in the waiting hall).
 const teamLabel = (t) => (watching() ? (t === "A" ? "الفريق الأول" : "الفريق الثاني") : t === US() ? "لنا" : "لهم");
 // Seats this browser plays automatically: offline every seat but mine; online (host) the bot seats.
-const isBot = (s) => (online ? !!online.seats[s]?.bot : s !== ME);
+// A player the computer played for AWAY_AFTER times in a row is "away": the computer keeps
+// playing their seat (bids too) until they press «أنا موجود». game.away / game.missed ride
+// along in the engine snapshot so every browser sees it.
+const isAway = (s) => !!game?.away?.[s];
+const isBot = (s) => (online ? !!online.seats[s]?.bot : s !== ME) || isAway(s);
 
 // ---------- Screen routing ----------
 function show(screen) {
@@ -302,7 +306,7 @@ function render() {
 // A player (me, or another human online) gets TURN_MS to play; then the computer plays the best
 // card for them, turn after turn, until they play themselves. A bar under their seat runs down.
 // Only the browser that owns the game plays for them; the others just show the bar.
-const TURN_MS = 5000;
+const TURN_MS = 5000, AWAY_AFTER = 5;
 let clock = { key: null, cancel: null };
 function turnClock() {
   const live = game.phase === "playing" && !trickHeld() && !isBot(game.turn) && !(online && !online.seats?.[game.turn]);
@@ -324,7 +328,13 @@ function autoPlay(key) {
   if (!game || clock.key !== key || game.phase !== "playing") return;
   if (dragging) { clock.cancel = later(() => autoPlay(key), 400); return; }   // let the drop land
   const seat = game.turn;
-  if (seat === ME) { ekkaArmed = false; toast("خلص وقتك — الكمبيوتر لعب عنك"); }
+  game.missed ||= [0, 0, 0, 0];
+  game.away ||= [false, false, false, false];
+  if (++game.missed[seat] >= AWAY_AFTER) game.away[seat] = true;
+  if (seat === ME) {
+    ekkaArmed = false;
+    toast(game.away[ME] ? "الكمبيوتر بيكمّل عنك — اضغط «أنا موجود» لما ترجع" : "خلص وقتك — الكمبيوتر لعب عنك", 2600);
+  }
   game.play(seat, chooseCard(game, seat).id);
   render();
   afterPlayFlow();
@@ -357,7 +367,7 @@ function renderWatchers() {
 // A chime when it becomes my turn to bid or play (once per turn, not on every render).
 let wasMyTurn = false;
 function turnCue() {
-  const mine = ME >= 0 && !busy && !trickHeld() &&
+  const mine = ME >= 0 && !busy && !trickHeld() && !isAway(ME) &&
     ((game.phase === "playing" && game.turn === ME) || (BID_PHASES.includes(game.phase) && game.bidTurn === ME));
   if (mine && !wasMyTurn) audio.play("turn");
   wasMyTurn = mine;
@@ -375,7 +385,29 @@ function renderActions() {
   $("btn-ekka").classList.toggle("armed", ekkaArmed);
   $("btn-ekka").textContent = ekkaArmed ? "✔ إكة — العب ورقتك" : "☝ إكة";
   $("btn-qaid").style.display = ME >= 0 && game.canClaimQaid(ME) ? "" : "none";
+  $("btn-here").style.display = ME >= 0 && isAway(ME) && !busyBack ? "" : "none";
 }
+
+// The player played (or said they're back): the missed-turn count starts again.
+function markPresent(seat) {
+  if (game.missed) game.missed[seat] = 0;
+  if (game.away) game.away[seat] = false;
+}
+
+let busyBack = false;   // non-host: «أنا موجود» sent, waiting for the host
+$("btn-here").onclick = () => {
+  if (!isAway(ME)) return;
+  if (online && !online.isHost) {
+    busyBack = true; render();
+    rooms.sendAction(online.code, ME, { kind: "back" }).catch(() => toast("تعذّر الإرسال، حاول مرة ثانية"))
+      .finally(() => later(() => { busyBack = false; render(); }, 1500));
+    return;
+  }
+  markPresent(ME);
+  toast("هلا بك — كمّل لعبك");
+  render();
+  maybeBotTurn();
+};
 
 // إكة is the player's own call, right or wrong: it rides on the next non-trump card they lead.
 // The game doesn't check it — a wrong one is a foul the other team can catch with قيد.
@@ -443,7 +475,7 @@ function renderHand() {
   }
   const hand = sortHand(game.hands[ME]);
   const legalIds = new Set(
-    (game.phase === "playing" && game.turn === ME && !busy && !trickHeld() ? game.legalMoves(ME) : []).map((c) => c.id)
+    (game.phase === "playing" && game.turn === ME && !busy && !trickHeld() && !isAway(ME) ? game.legalMoves(ME) : []).map((c) => c.id)
   );
   const old = new Map(), before = new Map();
   for (const el of wrap.children) if (el.dataset.id) { old.set(el.dataset.id, el); before.set(el, el.getBoundingClientRect().left); }
@@ -550,6 +582,7 @@ function renderOpponents() {
     const seat = $("seat-" + r);
     const buyer = !!game.mode && game.declarer === s;
     seat.classList.toggle("active-turn", turnSeat === s);
+    seat.classList.toggle("away", isAway(s));   // the computer is covering this player
     seat.classList.toggle("buyer", buyer);
     const suit = game.mode === "hokom" && SUIT_INFO[game.trump];
     const tag = !buyer ? "" : (suit ? `حكم <span class="suit ${suit.color}">${suit.symbol}</span>` : "صن") + multText(game);
@@ -699,7 +732,7 @@ function bidTitle() {
 
 function renderBidPanel() {
   const panel = $("bid-panel");
-  const showForHuman = BID_PHASES.includes(game.phase) && game.bidTurn === ME && !busy;
+  const showForHuman = BID_PHASES.includes(game.phase) && game.bidTurn === ME && !busy && !isAway(ME);
   // The buttons sit in a bar along the bottom; the hand moves up above them (--bidbar).
   $("screen-game").classList.toggle("bidding", showForHuman);
   if (!showForHuman) { panel.classList.add("hidden"); return; }
@@ -737,8 +770,9 @@ function addBidBtn(box, label, cls, fn) {
   box.appendChild(b);
 }
 function doBid(action) {
-  if (game.bidTurn !== ME) return;
+  if (game.bidTurn !== ME || isAway(ME)) return;
   if (online && !online.isHost) { sendMove({ kind: "bid", action }); return; }
+  markPresent(ME);
   game.bid(ME, action);
   render();
   maybeBotTurn();
@@ -746,11 +780,12 @@ function doBid(action) {
 
 // ---------- Human play ----------
 function onHumanPlay(cardId) {
-  if (busy || game.turn !== ME) return;
+  if (busy || game.turn !== ME || isAway(ME)) return;
   const card = game.hands[ME].find((c) => c.id === cardId);
   const ekka = ekkaArmed && game.canSayEkka(ME) && card?.suit !== game.trump;
   ekkaArmed = false;
   if (online && !online.isHost) { sendMove({ kind: "play", cardId, ekka }); return; }
+  markPresent(ME);
   game.play(ME, cardId, { ekka });
   render();
   afterPlayFlow();
@@ -1515,6 +1550,9 @@ function hostOnAction(a) {
   if (!game || online.room?.status !== "playing") return;
   const s = online.seats[a.seat];
   if (!s || s.bot || s.uid !== a.uid) return;
+  if (a.kind === "back") { markPresent(a.seat); schedulePublish(); render(); maybeBotTurn(); return; }
+  if (isAway(a.seat)) { schedulePublish(); return; }   // the computer has this seat until «أنا موجود»
+  if (a.kind === "bid" || a.kind === "play") markPresent(a.seat);
   const ok = a.kind === "bid" ? game.bid(a.seat, a.action)
            : a.kind === "play" ? game.play(a.seat, a.cardId, { ekka: !!a.ekka })
            : a.kind === "declare" ? game.declareProjects(a.seat)

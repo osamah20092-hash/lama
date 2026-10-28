@@ -1,8 +1,8 @@
 // Heuristic computer player for Baloot. Plays like a careful human: it remembers every card
 // played, notices who is out of a suit (or of trumps), knows which cards are now the boss
 // (أكبر ورقة باقية), feeds points to a partner who is sure to win, and doesn't waste big cards.
-import { makeDeck, cardStrength, cardPoints } from "./deck.js?v=18";
-import { TEAM_OF } from "./engine.js?v=18";
+import { makeDeck, cardStrength, cardPoints } from "./deck.js?v=19";
+import { TEAM_OF } from "./engine.js?v=19";
 
 // --- Bidding ---
 export function chooseBid(game, seat) {

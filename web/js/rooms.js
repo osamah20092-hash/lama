@@ -12,8 +12,8 @@
 //
 // The host's browser runs the authoritative BalootGame (including the bots) and publishes a
 // public snapshot; every other player renders that snapshot and sends moves as actions.
-import { fire, state as authState } from "./auth.js?v=18";
-import { BalootGame, detectProjects } from "./engine.js?v=18";
+import { fire, state as authState } from "./auth.js?v=19";
+import { BalootGame, detectProjects } from "./engine.js?v=19";
 
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid typos
 export const BOT_NAMES = ["كمبيوتر ١", "كمبيوتر ٢", "كمبيوتر ٣"];
@@ -214,7 +214,7 @@ export function publicState(g) {
   const pub = {};
   for (const k of ["targetScore", "strict", "score", "dealer", "round", "phase", "mode", "trump", "declarer",
     "hokomBidder", "pendingTrump", "hokomRound", "multiplier", "gahwa", "locked", "doubler",
-    "bidQueue", "bidTurn", "turn", "currentTrick", "flip", "lastRoundResult", "ekkaTeams"]) pub[k] = g[k] ?? null;
+    "bidQueue", "bidTurn", "turn", "currentTrick", "flip", "lastRoundResult", "ekkaTeams", "away"]) pub[k] = g[k] ?? null;
   pub.handCounts = g.hands.map((h) => h.length);
   // The بلوت holder stays secret until they say it.
   pub.balootDeclared = !!g.balootDeclared;

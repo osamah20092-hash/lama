@@ -547,3 +547,10 @@ body {
 .seat .clock { position: absolute; left: 50%; bottom: -8px; width: 56px; height: 5px; transform: translateX(-50%); background: rgba(40,25,11,.55); border-radius: 3px; overflow: hidden; pointer-events: none; }
 .seat .clock::after { content: ""; position: absolute; inset: 0; background: #ffd54a; transform-origin: left; animation: clock-run var(--t, 5s) linear forwards; }
 @keyframes clock-run { 70% { background: #ffb02e; } to { transform: scaleX(0); background: #e2412f; } }
+
+/* «أنا موجود»: stands out while the computer is playing your seat */
+#btn-here { animation: here-pulse 1.1s ease-in-out infinite alternate; }
+@keyframes here-pulse { to { box-shadow: 0 0 0 6px rgba(255,213,74,.35), 0 0 18px rgba(255,213,74,.8); } }
+.seat .avatar { position: relative; }
+.seat.away .avatar::after { content: "🤖"; position: absolute; bottom: -4px; inset-inline-end: -6px; font-size: 14px; background: #2a1a0a; border: 1px solid var(--gold); border-radius: 50%; width: 20px; height: 20px; display: grid; place-items: center; }
+.seat.away .avatar { filter: grayscale(.4); }

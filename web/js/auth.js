@@ -1,6 +1,6 @@
 // Firebase auth + wallet layer. Loads the Firebase SDK lazily only when configured,
 // so the game still runs in guest mode before you set up Firebase.
-import { FIREBASE_CONFIG, ADMIN_EMAILS, STARTING_BALANCE, isConfigured } from "./firebase-config.js?v=18";
+import { FIREBASE_CONFIG, ADMIN_EMAILS, STARTING_BALANCE, isConfigured } from "./firebase-config.js?v=19";
 
 const SDK = "https://www.gstatic.com/firebasejs/10.12.2";
 
