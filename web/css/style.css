@@ -133,7 +133,9 @@ body {
 .tc-2 { top: 0; left: 50%; transform: translateX(-50%); }
 .tc-3 { left: 0; top: 50%; transform: translateY(-50%); }
 .tc-1 { right: 0; top: 50%; transform: translateY(-50%); }
-@keyframes drop { from { opacity: 0; transform: translateY(-8px) scale(.9); } }
+@keyframes drop { from { opacity: 0; scale: .8; } }
+/* The revealed card (ورقة الشراء) lies face up in the middle while bidding */
+.trick-card.flip-center { top: 50%; left: 50%; transform: translate(-50%, -50%); width: calc(var(--cw) * 1.1); height: calc(var(--cw) * 1.6); }
 /* إكة: a tag on the led card, and the button stays lit once pressed */
 .ekka-tag {
   position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
@@ -322,7 +324,7 @@ body {
    Card size follows the screen width; the 8-card hand overlaps instead of overflowing. */
 #screen-game { --cw: min(64px, 15vw); }
 .myhand-wrap { height: auto; min-height: calc(var(--cw) * 1.47 + 30px); padding-bottom: max(10px, env(safe-area-inset-bottom)); }
-.myhand { padding: 0 8px; gap: 0; }
+.myhand { padding: 0 8px; gap: 0; direction: ltr; }   /* biggest card on the left */
 .seat { z-index: 3; }
 .myhand .card { width: var(--cw); height: calc(var(--cw) * 1.47); }
 .myhand .card + .card { margin-inline-start: min(0px, calc((100vw - 16px - 8 * var(--cw)) / 7)); }

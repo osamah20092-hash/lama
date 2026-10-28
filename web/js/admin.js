@@ -1,8 +1,8 @@
 // Admin panel: list accounts, adjust balances, deactivate or delete players. Only an admin
 // (by ADMIN_EMAILS, enforced by Firestore rules) can actually write — others get permission errors.
 import { initFirebase, onUserChange, watchUsers, watchBanned, adjustCoins, setCoins,
-  setDisabled, deleteAccount, restoreAccount, state } from "./auth.js?v=14";
-import { isConfigured } from "./firebase-config.js?v=14";
+  setDisabled, deleteAccount, restoreAccount, state } from "./auth.js?v=15";
+import { isConfigured } from "./firebase-config.js?v=15";
 
 const $ = (id) => document.getElementById(id);
 const rows = new Map(); // uid → row element, updated in place so typing in a field isn't wiped

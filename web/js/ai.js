@@ -1,8 +1,8 @@
 // Heuristic computer player for Baloot. Plays like a careful human: it remembers every card
 // played, notices who is out of a suit (or of trumps), knows which cards are now the boss
 // (أكبر ورقة باقية), feeds points to a partner who is sure to win, and doesn't waste big cards.
-import { makeDeck, cardStrength, cardPoints } from "./deck.js?v=14";
-import { TEAM_OF } from "./engine.js?v=14";
+import { makeDeck, cardStrength, cardPoints } from "./deck.js?v=15";
+import { TEAM_OF } from "./engine.js?v=15";
 
 // --- Bidding ---
 export function chooseBid(game, seat) {
@@ -133,11 +133,151 @@ const lowest = (k, cards) => cards.slice().sort(byPts(k))[0];
 const cheapestWinner = (k, cards) => cards.slice().sort((a, b) => k.str(a) - k.str(b))[0];
 
 // --- Card play ---
-export function chooseCard(game, seat) {
+// The bot looks ahead: it deals the cards it can't see in many ways that fit everything shown so
+// far (who is out of a suit, who can't have a higher trump, the bought card, shown projects…),
+// plays the round out for each of its cards with the quick player below, and picks the card that
+// wins the most game points on average. budgetMs caps the thinking time.
+export function chooseCard(game, seat, { budgetMs = 220, minDeals = 24, maxDeals = 400 } = {}) {
   const legal = game.strictMoves(seat); // bots always play by the rules, even when strict is off
+  if (legal.length === 1) return legal[0];
+  if (game.hands.some((h) => h.some((c) => !c))) return chooseCardQuick(game, seat);
+  const team = TEAM_OF(seat);
+  const known = constraints(game, seat);
+  const totals = legal.map(() => 0);
+  const start = Date.now();
+  let deals = 0;
+  while (deals < maxDeals && (deals < minDeals || Date.now() - start < budgetMs)) {
+    const hands = sampleHands(game, seat, known);
+    if (!hands) break;
+    legal.forEach((card, i) => { totals[i] += playOut(game, hands, seat, card, team); });
+    deals++;
+  }
+  if (!deals) return chooseCardQuick(game, seat);
+  let best = 0;
+  for (let i = 1; i < legal.length; i++) if (totals[i] > totals[best]) best = i;
+  return legal[best];
+}
+
+// The quick heuristic player (also used inside the look-ahead).
+export function chooseCardQuick(game, seat) {
+  const legal = game.strictMoves(seat);
   if (legal.length === 1) return legal[0];
   const k = knowledge(game, seat);
   return game.currentTrick.length === 0 ? chooseLead(game, k, legal) : chooseFollow(game, k, legal);
+}
+
+// What the table has shown about each hidden hand: cards it can't hold, and cards it must hold.
+function constraints(game, seat) {
+  const { mode, trump } = game;
+  const str = (c) => cardStrength(c, mode, trump);
+  const cant = [0, 1, 2, 3].map(() => new Set());
+  const must = [0, 1, 2, 3].map(() => new Set());
+  const all = makeDeck();
+  const noTrumpAbove = (s, st) => { for (const c of all) if (c.suit === trump && str(c) > st) cant[s].add(c.id); };
+  const tricks = [...game.tricks.filter(Boolean).map((t) => t.cards), game.currentTrick];
+  for (const cards of tricks) {
+    if (!cards || !cards.length) continue;
+    const lead = cards[0], led = lead.card.suit;
+    // Locked game: leading a trump means holding nothing else.
+    if (game.locked && mode === "hokom" && led === trump) for (const c of all) if (c.suit !== trump) cant[lead.seat].add(c.id);
+    let win = { seat: lead.seat, card: lead.card };
+    for (let i = 1; i < cards.length; i++) {
+      const p = cards[i];
+      const st = str(win.card);
+      const oppWinning = TEAM_OF(win.seat) !== TEAM_OF(p.seat);
+      if (p.card.suit !== led) {
+        for (const c of all) if (c.suit === led) cant[p.seat].add(c.id);
+        if (mode === "hokom") {
+          if (p.card.suit !== trump) {
+            if (oppWinning) noTrumpAbove(p.seat, win.card.suit === trump ? st : 0);
+            else if (win.seat === lead.seat && lead.card.rank !== "A" && !lead.ekka) noTrumpAbove(p.seat, 0);
+          } else if (oppWinning && str(p.card) < st) noTrumpAbove(p.seat, st);
+        }
+      } else if (mode === "hokom" && led === trump && oppWinning && str(p.card) < st) {
+        noTrumpAbove(p.seat, st);
+      }
+      const beats = (mode === "hokom" && p.card.suit === trump) || p.card.suit === led;
+      if (beats && str(p.card) > str(win.card)) win = p;
+    }
+  }
+  // The buyer holds the revealed card; shown projects and a said بلوت reveal cards too.
+  must[game.declarer].add(game.flip.id);
+  for (const p of game.tricks.length ? game.countedProjects() : []) for (const c of p.cards) must[p.seat].add(c.id);
+  if (game.balootDeclared && game.balootSeat !== null) {
+    must[game.balootSeat].add(`K_${trump}`); must[game.balootSeat].add(`Q_${trump}`);
+  }
+  return { cant, must };
+}
+
+// One random deal of the unseen cards that fits the constraints (relaxed if none can be found).
+function sampleHands(game, seat, { cant, must }) {
+  const played = new Set();
+  for (const t of game.tricks) if (t) for (const p of t.cards) played.add(p.card.id);
+  for (const p of game.currentTrick) played.add(p.card.id);
+  const mine = new Set(game.hands[seat].map((c) => c.id));
+  const unseen = makeDeck().filter((c) => !played.has(c.id) && !mine.has(c.id));
+  const others = [0, 1, 2, 3].filter((s) => s !== seat);
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const strict = attempt < 25;
+    const hands = [[], [], [], []];
+    hands[seat] = game.hands[seat].slice();
+    const room = {};
+    for (const s of others) room[s] = game.hands[s].length;
+    const pool = [];
+    for (const c of unseen) {
+      const owner = others.find((s) => must[s].has(c.id));
+      if (owner !== undefined && room[owner] > 0) { hands[owner].push(c); room[owner]--; }
+      else pool.push(c);
+    }
+    // Most constrained cards first, each to a random seat that may hold it.
+    const opts = (c) => others.filter((s) => room[s] > 0 && (!strict || !cant[s].has(c.id)));
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    pool.sort((a, b) => opts(a).length - opts(b).length);
+    let ok = true;
+    for (const c of pool) {
+      const o = opts(c);
+      if (!o.length) { ok = false; break; }
+      // Weight by free room so short hands aren't overfilled early.
+      let r = Math.random() * o.reduce((n, s) => n + room[s], 0), pick = o[0];
+      for (const s of o) { r -= room[s]; if (r < 0) { pick = s; break; } }
+      hands[pick].push(c); room[pick]--;
+    }
+    if (ok) return hands;
+  }
+  return null;
+}
+
+// Play `card`, then finish the round with every seat using the quick player. Score from the
+// bot's side: game points won minus lost this round, with card points breaking near-ties.
+function playOut(game, hands, seat, card, team) {
+  const g = Object.create(Object.getPrototypeOf(game));
+  Object.assign(g, {
+    targetScore: Infinity, rng: Math.random, strict: true, listeners: [],
+    score: { A: 0, B: 0 }, dealer: game.dealer, round: game.round, phase: "playing",
+    mode: game.mode, trump: game.trump, declarer: game.declarer, multiplier: game.multiplier,
+    gahwa: false, locked: game.locked, doubler: game.doubler, flip: game.flip,
+    projects: game.projects.slice(), projectTeam: game.projectTeam, projectCandidates: [[], [], [], []],
+    fouls: [], ekkaTeams: [], balootSeat: game.balootSeat, balootDeclared: game.balootDeclared,
+    tricks: game.tricks.slice(), currentTrick: game.currentTrick.slice(), turn: game.turn,
+    wonCards: { A: game.wonCards.A.slice(), B: game.wonCards.B.slice() }, lastTrickTeam: game.lastTrickTeam,
+    hands: hands.map((h) => h.slice()),
+  });
+  g.play(seat, card.id, { ekka: ekkaHolds(g, card) });
+  while (g.phase === "playing") {
+    const s = g.turn;
+    const c = chooseCardQuick(g, s);
+    g.play(s, c.id, { ekka: ekkaHolds(g, c) });
+  }
+  const r = g.lastRoundResult;
+  const other = team === "A" ? "B" : "A";
+  return (r.gp[team] - r.gp[other]) + 0.02 * (r.raw[team] - r.raw[other]);
+}
+
+// Inside the look-ahead every hand is known: a lead says إكة exactly when it's right.
+function ekkaHolds(g, card) {
+  if (g.mode !== "hokom" || g.currentTrick.length || card.suit === g.trump || card.rank === "A") return false;
+  const st = cardStrength(card, g.mode, g.trump);
+  return !g.hands.some((h) => h.some((c) => c.suit === card.suit && cardStrength(c, g.mode, g.trump) > st));
 }
 
 function chooseLead(game, k, legal) {

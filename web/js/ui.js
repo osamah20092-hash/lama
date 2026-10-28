@@ -1,11 +1,11 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=14";
-import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=14";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, cardLabel } from "./deck.js?v=14";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=14";
-import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=14";
-import * as rooms from "./rooms.js?v=14";
-import * as audio from "./audio.js?v=14";
-import * as stats from "./stats.js?v=14";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=15";
+import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=15";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, RANKS, cardLabel, cardStrength } from "./deck.js?v=15";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=15";
+import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=15";
+import * as rooms from "./rooms.js?v=15";
+import * as audio from "./audio.js?v=15";
+import * as stats from "./stats.js?v=15";
 
 const $ = (id) => document.getElementById(id);
 let ekkaArmed = false;   // I pressed إكة: it goes with the next card I lead
@@ -377,7 +377,24 @@ $("btn-qaid").onclick = () => {
   render();
 };
 
-function cardSrc(card) { return `assets/cards/${card.rank}_${card.suit}.svg`; }
+// The face cards are big vector drawings (~200 KB each). Redrawing them on every render made a
+// played card show up late, so each card is drawn once into a small bitmap and reused.
+const cardUrls = {};
+function cardSrc(card) { return cardUrls[card.id] || `assets/cards/${card.rank}_${card.suit}.svg`; }
+(function preloadCards() {
+  for (const s of SUITS) for (const r of RANKS) {
+    const id = `${r}_${s}`, img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement("canvas");
+        c.width = 200; c.height = 300;
+        c.getContext("2d").drawImage(img, 0, 0, 200, 300);
+        c.toBlob((b) => { if (b) cardUrls[id] = URL.createObjectURL(b); }, "image/png");
+      } catch (_) { /* keep the SVG */ }
+    };
+    img.src = `assets/cards/${id}.svg`;
+  }
+})();
 
 function cardEl(card, { playable = false } = {}) {
   const el = document.createElement("div");
@@ -408,13 +425,20 @@ function renderHand() {
   }
 }
 
+// Biggest first (left to right): suits grouped with colours alternating, the trump suit first,
+// and inside each suit by its real strength in the contract (J 9 A 10… in the trump suit).
 function sortHand(hand) {
-  const suitOrder = SUITS;
-  const rankOrder = ["A", "10", "K", "Q", "J", "9", "8", "7"];
-  return hand.slice().sort(
-    (a, b) => suitOrder.indexOf(a.suit) - suitOrder.indexOf(b.suit)
-           || rankOrder.indexOf(a.rank) - rankOrder.indexOf(b.rank)
-  );
+  const mode = game.mode || "sun", trump = game.trump;
+  const present = SUITS.filter((s) => hand.some((c) => c.suit === s));
+  let order = present, best = -1;
+  const perms = (a) => (a.length <= 1 ? [a] : a.flatMap((x, i) => perms([...a.slice(0, i), ...a.slice(i + 1)]).map((p) => [x, ...p])));
+  for (const p of perms(present)) {
+    let v = p[0] === trump ? 10 : 0;
+    for (let i = 1; i < p.length; i++) if (SUIT_INFO[p[i]].color !== SUIT_INFO[p[i - 1]].color) v++;
+    if (v > best) { best = v; order = p; }
+  }
+  return hand.slice().sort((a, b) => order.indexOf(a.suit) - order.indexOf(b.suit)
+    || cardStrength(b, mode, trump) - cardStrength(a, mode, trump));
 }
 
 function renderOpponents() {
@@ -441,30 +465,65 @@ function trickHeld() {
   return Date.now() < trickHold.until;
 }
 
+// Cards already on the table are kept as they are (not rebuilt on every render), so only a newly
+// played card animates in and nothing flickers. While bidding, the revealed card lies face up in
+// the middle for everyone.
 function renderTrick() {
   const area = $("trick-area");
-  area.innerHTML = "";
-  let plays = game.currentTrick, winner = null;
-  const last = game.tricks[game.tricks.length - 1];
-  if (!plays.length && last && (trickHeld() || game.phase !== "playing")) { plays = last.cards; winner = last.winner; }
-  for (const p of plays) {
-    const el = document.createElement("div");
-    el.className = `trick-card tc-${rel(p.seat)}` + (p.seat === winner ? " win" : "");
-    el.innerHTML = `<img class="card-face" src="${cardSrc(p.card)}" alt="" draggable="false">` +
-      (p.ekka ? `<span class="ekka-tag">إكة</span>` : "");
-    area.appendChild(el);
+  let items;
+  if (BID_PHASES.includes(game.phase) && game.phase !== "doubling" && game.flip) {
+    items = [{ key: "flip:" + game.flip.id, cls: "trick-card flip-center", card: game.flip }];
+  } else {
+    let plays = game.currentTrick, winner = null;
+    const last = game.tricks[game.tricks.length - 1];
+    if (!plays.length && last && (trickHeld() || game.phase !== "playing")) { plays = last.cards; winner = last.winner; }
+    items = plays.map((p) => ({
+      key: `${game.round}:${p.card.id}`, card: p.card, ekka: p.ekka,
+      cls: `trick-card tc-${rel(p.seat)}` + (p.seat === winner ? " win" : ""),
+    }));
+  }
+  const keep = new Map();
+  for (const el of [...area.children]) {
+    if (items.some((it) => it.key === el.dataset.key)) keep.set(el.dataset.key, el);
+    else el.remove();
+  }
+  for (const it of items) {
+    let el = keep.get(it.key);
+    if (!el) {
+      el = document.createElement("div");
+      el.dataset.key = it.key;
+      el.innerHTML = `<img class="card-face" src="${cardSrc(it.card)}" alt="" draggable="false">` +
+        (it.ekka ? `<span class="ekka-tag">إكة</span>` : "");
+      area.appendChild(el);
+    }
+    if (el.className !== it.cls) el.className = it.cls;
   }
 }
 
-// Second trick: the counted projects are shown to everyone, with their cards.
+// Second trick: each counted project is shown to everyone, with its cards, when its owner's turn
+// comes — and stays up a few seconds after they play.
+const PROJ_SHOW_MS = 3500;
+let projShownAt = {};   // seat → when its projects went up, for round projShownAt.round
+let projCards = [];     // the projects on show (kept after the second trick is collected)
 function renderProjectsShow() {
   const box = $("proj-show");
-  const show = game.phase === "playing" && game.tricks.length === 1 ? game.countedProjects() : [];
+  if (projShownAt.round !== game.round) { projShownAt = { round: game.round }; projCards = []; }
+  const now = Date.now();
+  if (game.phase === "playing" && game.tricks.length === 1 && !trickHeld()) {
+    projCards = game.countedProjects();
+    if (projCards.some((p) => p.seat === game.turn) && !projShownAt[game.turn]) {
+      projShownAt[game.turn] = now;
+      later(render, PROJ_SHOW_MS + 50);
+    }
+  }
+  const owning = game.phase === "playing" && game.tricks.length === 1 && !trickHeld() ? game.turn : -1;
+  const show = game.phase === "playing" ? projCards.filter((p) => projShownAt[p.seat]
+    && (p.seat === owning || now - projShownAt[p.seat] < PROJ_SHOW_MS)) : [];
   box.classList.toggle("hidden", !show.length);
-  if (!show.length) return;
-  box.innerHTML = show.map((p) =>
+  const html = show.map((p) =>
     `<div class="proj-row"><b>${p.seat === ME ? "أنت" : seatName(p.seat)}: ${PROJECT_AR[p.type]}</b>` +
     p.cards.map((c) => `<img src="${cardSrc(c)}" alt="">`).join("") + "</div>").join("");
+  if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
 }
 
 function renderTurn() {
@@ -652,7 +711,7 @@ function afterPlayFlow() {
   if (!isBot(game.turn)) { render(); return; }
   // Leading a new trick: wait until the finished one has been seen by everyone.
   const leading = !game.currentTrick.length && game.tricks.length;
-  botLater(leading ? TRICK_HOLD_MS + 300 : 700, () => {
+  botLater(leading ? TRICK_HOLD_MS + 300 : 500, () => {   // + up to ~0.2s of look-ahead in chooseCard
     if (game.phase !== "playing" || !isBot(game.turn)) return;
     game.declareProjects(game.turn);   // bots never forget their projects
     const card = chooseCard(game, game.turn);
