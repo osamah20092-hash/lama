@@ -1,11 +1,11 @@
-import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=17";
-import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=17";
-import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, RANKS, cardLabel, cardStrength } from "./deck.js?v=17";
-import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=17";
-import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=17";
-import * as rooms from "./rooms.js?v=17";
-import * as audio from "./audio.js?v=17";
-import * as stats from "./stats.js?v=17";
+import { BalootGame, TEAM_OF, BID_PHASES, PROJECT_AR } from "./engine.js?v=18";
+import { chooseBid, chooseCard, shouldSayBaloot, shouldSayEkka, seesRevoke } from "./ai.js?v=18";
+import { SUIT_INFO, RANK_AR, RANK_LABEL, SUITS, RANKS, cardLabel, cardStrength } from "./deck.js?v=18";
+import { initFirebase, onUserChange, signIn, signUp, logout, state, placeStake, awardWin, logMatch } from "./auth.js?v=18";
+import { BET_TIERS, COINS_ON_WIN, SHOW_H2H } from "./firebase-config.js?v=18";
+import * as rooms from "./rooms.js?v=18";
+import * as audio from "./audio.js?v=18";
+import * as stats from "./stats.js?v=18";
 
 const $ = (id) => document.getElementById(id);
 let ekkaArmed = false;   // I pressed إكة: it goes with the next card I lead
@@ -296,6 +296,38 @@ function render() {
   renderProjectsShow();
   renderWatchers();
   turnCue();
+  turnClock();
+}
+
+// A player (me, or another human online) gets TURN_MS to play; then the computer plays the best
+// card for them, turn after turn, until they play themselves. A bar under their seat runs down.
+// Only the browser that owns the game plays for them; the others just show the bar.
+const TURN_MS = 5000;
+let clock = { key: null, cancel: null };
+function turnClock() {
+  const live = game.phase === "playing" && !trickHeld() && !isBot(game.turn) && !(online && !online.seats?.[game.turn]);
+  const key = live ? `${game.round}:${game.tricks.length}:${game.currentTrick.length}:${game.turn}` : null;
+  if (key === clock.key) return;
+  if (clock.cancel) clock.cancel();
+  clock = { key, cancel: null };
+  document.querySelectorAll(".seat .clock").forEach((el) => el.remove());
+  if (!key) return;
+  const bar = document.createElement("div");
+  bar.className = "clock";
+  bar.style.setProperty("--t", TURN_MS + "ms");
+  $("seat-" + rel(game.turn)).appendChild(bar);
+  if (online && !online.isHost) return;
+  clock.cancel = later(() => autoPlay(key), TURN_MS);
+}
+
+function autoPlay(key) {
+  if (!game || clock.key !== key || game.phase !== "playing") return;
+  if (dragging) { clock.cancel = later(() => autoPlay(key), 400); return; }   // let the drop land
+  const seat = game.turn;
+  if (seat === ME) { ekkaArmed = false; toast("خلص وقتك — الكمبيوتر لعب عنك"); }
+  game.play(seat, chooseCard(game, seat).id);
+  render();
+  afterPlayFlow();
 }
 
 // Everyone at the table sees how many are watching; spectators get a bar to take a computer's seat.
@@ -776,6 +808,8 @@ function botLater(ms, fn) {
 function resetDriver() {
   if (botTimer) botTimer();
   botTimer = null;
+  if (clock.cancel) clock.cancel();
+  clock = { key: null, cancel: null };
   busy = false;
 }
 

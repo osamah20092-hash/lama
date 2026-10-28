@@ -542,3 +542,8 @@ body {
 .pb-3 { left: 52px; top: calc(50% - 64px); }
 .pb-1, .pb-3 { top: calc(50% - 86px); }
 .pb-0 { bottom: 86px; }
+
+/* Turn timer: a bar under the player's seat that runs down (and turns red) before the computer plays */
+.seat .clock { position: absolute; left: 50%; bottom: -8px; width: 56px; height: 5px; transform: translateX(-50%); background: rgba(40,25,11,.55); border-radius: 3px; overflow: hidden; pointer-events: none; }
+.seat .clock::after { content: ""; position: absolute; inset: 0; background: #ffd54a; transform-origin: left; animation: clock-run var(--t, 5s) linear forwards; }
+@keyframes clock-run { 70% { background: #ffb02e; } to { transform: scaleX(0); background: #e2412f; } }

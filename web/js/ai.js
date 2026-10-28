@@ -1,8 +1,8 @@
 // Heuristic computer player for Baloot. Plays like a careful human: it remembers every card
 // played, notices who is out of a suit (or of trumps), knows which cards are now the boss
 // (أكبر ورقة باقية), feeds points to a partner who is sure to win, and doesn't waste big cards.
-import { makeDeck, cardStrength, cardPoints } from "./deck.js?v=17";
-import { TEAM_OF } from "./engine.js?v=17";
+import { makeDeck, cardStrength, cardPoints } from "./deck.js?v=18";
+import { TEAM_OF } from "./engine.js?v=18";
 
 // --- Bidding ---
 export function chooseBid(game, seat) {
@@ -34,7 +34,8 @@ export function chooseBid(game, seat) {
       return sunScore >= 14 ? { kind: "sun" } : can("hokom");
     case "doubling": {
       // Defenders double on a strong hand; buyers raise only when very strong. Never قهوة.
-      const v = game.mode === "sun" ? sunScore : suitHokomStrength(hand, game.trump);
+      // Doubling comes before the last three cards, so a 5–6 card hand is scaled up to 8.
+      const v = (game.mode === "sun" ? sunScore : suitHokomStrength(hand, game.trump)) * 8 / Math.max(5, hand.length);
       if (game.multiplier === 1 && v >= (game.mode === "sun" ? 14 : 10)) return { kind: "double", locked: false };
       if (game.multiplier === 2 && v >= 14) return { kind: "triple" };
       if (game.multiplier === 3 && v >= 12) return { kind: "four", locked: false };

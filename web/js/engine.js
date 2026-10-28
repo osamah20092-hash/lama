@@ -4,7 +4,7 @@
 // Teams: A = seats {0,2}, B = seats {1,3}.
 import {
   makeDeck, shuffle, SUITS, ORDER_SEQ, cardStrength, cardPoints,
-} from "./deck.js?v=17";
+} from "./deck.js?v=18";
 
 export const TEAM_OF = (seat) => (seat % 2 === 0 ? "A" : "B");
 const OTHER = (team) => (team === "A" ? "B" : "A");
@@ -166,16 +166,21 @@ export class BalootGame {
     this.mode = mode;
     this.trump = trump;
     this.declarer = seat;
-    // Buyer takes the revealed card + 2 more; everyone else gets 3 → 8 cards each.
+    // The buyer takes the revealed card now; the rest is dealt after doubling (dealRest), so
+    // دبل / ثري / فور / قهوة are decided on the first five cards only.
     this.hands[seat].push(this.flip);
+    this.emit({ type: "contract", mode, trump, declarer: seat });
+    this.startDoubling();
+  }
+
+  // Buyer gets 2 more cards, everyone else 3 → 8 cards each.
+  dealRest() {
     const pool = this.remainder.filter((c) => c.id !== this.flip.id);
     let pi = 0;
     for (let s = 0; s < 4; s++) {
       while (this.hands[s].length < 8) this.hands[s].push(pool[pi++]);
     }
     this.findProjects();
-    this.emit({ type: "contract", mode, trump, declarer: seat });
-    this.startDoubling();
   }
 
   // ---------- Doubling (دبل / ثري / فور / قهوة) ----------
@@ -237,6 +242,7 @@ export class BalootGame {
   }
 
   startPlay() {
+    if (this.hands.some((h) => h.length < 8)) this.dealRest();
     this.phase = "playing";
     this.turn = (this.dealer + 1) % 4; // player right of dealer leads
     this.currentTrick = [];
